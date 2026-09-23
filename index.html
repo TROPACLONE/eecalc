@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="EE Calc">
+<meta name="format-detection" content="telephone=no">
+<title>EE Calc</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>:root{--bg: #000;--text: #e6e6e6;--muted: #8a8a8a;--amber: #f0b44c;--err: #ff7b6b;--line: #1c1c1c;--key: #2b2b2b;--press: #1a1a1a;--sel: #1d2b40;--mono: ui-monospace, "SF Mono", Menlo, monospace;--ui: system-ui, -apple-system, "Helvetica Neue", sans-serif;--keyh: clamp(40px, 6.1vh, 58px)}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--ui);-webkit-text-size-adjust:100%;overscroll-behavior:none}body{-webkit-tap-highlight-color:transparent;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;overflow:hidden}button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;touch-action:manipulation}[hidden]{display:none!important}#app{position:fixed;inset:0;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}#tabs{display:flex;gap:4px;padding:6px 12px 4px;border-bottom:1px solid var(--line)}#tabs button{flex:1;padding:8px 0;font-size:15px;color:var(--muted);border-radius:8px}#tabs button.on{color:var(--text);font-weight:600}#views{position:relative;min-height:0}.view{position:absolute;inset:0;display:flex;flex-direction:column;min-height:0}.scroll{overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}#history{flex:1;padding:10px 16px 4px;font-family:var(--mono)}.entry{padding:6px 0 8px}.entry .in{font-size:14px;color:var(--muted);white-space:pre;overflow-x:auto;padding:2px 0}.entry .out{font-size:20px;white-space:pre;overflow-x:auto;padding:2px 0;line-height:1.3}.entry .alt{color:var(--amber)}.entry .name{color:var(--muted)}.entry .note{font-size:13px;color:var(--muted);font-family:var(--ui)}.hint{color:var(--muted);font-size:15px;line-height:1.55;font-family:var(--ui);white-space:pre-line;padding-top:8px}.hint code{font-family:var(--mono);color:var(--text)}#preview{min-height:24px;padding:2px 18px;font:14px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#preview.err{color:var(--err)}.editor{font-family:var(--mono);white-space:pre;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;cursor:text}.editor::-webkit-scrollbar{display:none}.editor .caret{display:inline-block;width:2px;margin:0 -1px;background:var(--amber);vertical-align:text-bottom;height:1.15em;animation:blink 1.05s steps(1) 6}.editor:not(.active) .caret{visibility:hidden}@keyframes blink{50%{opacity:0}}#expr{margin:2px 12px 0;padding:10px 12px;font-size:26px;min-height:54px;border:1px solid var(--key);border-radius:12px}#bar{display:flex;align-items:center;gap:2px;padding:6px 10px 2px}#bar button{font-size:13px;color:var(--muted);padding:6px 10px;border-radius:8px}#bar .grow{flex:1}.list{padding:4px 16px 20px}.group{font-size:13px;color:var(--muted);margin:18px 4px 6px}.tool{display:block;width:100%;text-align:left;padding:11px 12px;border-radius:12px;border:1px solid var(--line);margin-bottom:8px}.tool b{display:block;font-size:17px;font-weight:500;margin-bottom:3px}.tool span{font-size:13px;color:var(--muted);line-height:1.35}.back{font-size:15px;color:var(--muted);padding:10px 16px 4px;text-align:left}.page h2{margin:2px 16px 4px;font-size:22px;font-weight:600}.page p.desc{margin:0 16px 10px;font-size:13px;color:var(--muted);line-height:1.4}.fields{padding:0 16px;display:grid;grid-template-columns:minmax(96px,auto) minmax(0,1fr) 44px;gap:6px 8px;align-items:center}.fields label{font-size:14px}.fields label small{color:var(--muted);font-size:12px;margin-left:4px}.fields .editor{font-size:18px;padding:8px 10px;min-height:40px;border:1px solid var(--key);border-radius:10px}.fields .editor.active{border-color:#555}.fields .unit{font-size:13px;color:var(--muted)}.results{margin:12px 16px 16px;padding-top:10px;border-top:1px solid var(--line);font-family:var(--mono)}.res{display:grid;grid-template-columns:minmax(64px,auto) minmax(0,1fr);gap:0 12px;padding:5px 0}.res .rk{color:var(--muted);font-size:15px}.res .v{font-size:17px;white-space:pre;overflow-x:auto}.res .v .alt{color:var(--amber)}.res .v .note{color:var(--muted);font:12px var(--ui);margin-left:8px}.results .msg{font:14px var(--ui);color:var(--muted)}.results .msg.err{color:var(--err)}.vars{padding:8px 16px 20px;font-family:var(--mono)}.var{padding:10px 4px;border-bottom:1px solid var(--line)}.var b{display:block;font:600 15px var(--ui);margin-bottom:2px}.var div{font-size:16px;white-space:pre;overflow-x:auto}.var .alt{color:var(--amber)}.wide{display:block;margin:16px auto 0;padding:10px 18px;border:1px solid var(--key);border-radius:10px;color:var(--muted);font-size:14px}.help{padding:6px 16px 30px;font:13px/1.5 var(--mono);white-space:pre-wrap;-webkit-user-select:text;user-select:text}.help h3{font:600 14px var(--ui);color:var(--amber);margin:16px 0 4px}#pad{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;padding:8px 10px}.k{height:var(--keyh);border-radius:12px;border:1px solid var(--key);font-size:21px;display:flex;align-items:center;justify-content:center}.k.fnk{font-size:16px}.k.op{color:var(--amber)}.k.muted{color:var(--muted);font-size:16px}.k.exe{color:#000;background:var(--amber);border-color:var(--amber);font-weight:600}.k.on{border-color:var(--amber);color:var(--amber)}.k.down{background:var(--press)}.k.exe.down{filter:brightness(.8)}body.kbd #pad{display:none}#sheet{position:fixed;inset:0;background:#000000b8;display:flex;align-items:flex-end;justify-content:center;z-index:10}#sheet .box{width:min(100%,560px);max-height:78%;background:#000;border:1px solid var(--key);border-bottom:0;border-radius:16px 16px 0 0;padding:10px 12px calc(12px + env(safe-area-inset-bottom));overflow-y:auto}#sheet .box h4{margin:6px 6px 8px;font-size:13px;color:var(--muted);font-weight:500}#sheet .act{display:block;width:100%;text-align:left;padding:13px 12px;font-size:17px;border-bottom:1px solid var(--line)}#sheet .act:last-child{border-bottom:0}#sheet .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px;margin-bottom:8px}#sheet .grid button{padding:10px 4px;border:1px solid var(--key);border-radius:10px;font:15px var(--mono)}#toast{position:fixed;left:50%;bottom:calc(40% + env(safe-area-inset-bottom));transform:translate(-50%);padding:8px 14px;border:1px solid var(--key);border-radius:18px;background:#000;font-size:14px;z-index:20;pointer-events:none}#install{margin:8px 12px 0;padding:10px 12px;border:1px solid var(--key);border-radius:12px;font-size:13px;color:var(--muted);line-height:1.4}#install button{float:right;color:var(--text);padding:0 0 4px 12px;font-size:15px}#sysin{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px;border:0;padding:0}@media(min-width:700px){:root{--keyh: clamp(48px, 6.4vh, 66px)}.k{font-size:24px}.k.fnk{font-size:18px}#pad{max-width:620px;width:100%;justify-self:center;padding-bottom:14px}#expr{font-size:30px}.entry .out{font-size:22px}#history,.list,.fields,.results,.vars,.help,#preview,#bar{max-width:900px;width:100%;margin-left:auto;margin-right:auto}}@media(min-width:1000px)and (orientation:landscape){#app{grid-template-columns:minmax(0,1fr) 430px;grid-template-rows:auto minmax(0,1fr)}#tabs{grid-column:1 / span 2}#views{grid-column:1;grid-row:2}#pad{grid-column:2;grid-row:2;align-self:stretch;max-width:none;border-left:1px solid var(--line);grid-auto-rows:minmax(56px,84px);align-content:end;padding:12px}.k{height:auto}}</style>
+</head>
+<body>
+<div id="app">
+<nav id="tabs">
+<button data-view="calc" class="on">Calculator</button>
+<button data-view="energy">Energy</button>
+<button data-view="vars">Variables</button>
+<button data-view="help">Help</button>
+</nav>
+<main id="views">
+<section class="view" id="v-calc">
+<div id="install" hidden><button id="install-x" aria-label="Dismiss">✕</button>For full screen and offline use: Share → Add to Home Screen.</div>
+<div id="history" class="scroll" aria-live="polite"></div>
+<div id="preview"></div>
+<div id="expr" class="editor active" role="textbox" aria-label="Expression"></div>
+<div id="bar">
+<button id="s-unit">Degrees</button><button id="s-digits">10 digits</button><button id="s-nota">Normal</button>
+<span class="grow"></span><button id="clear-hist" hidden>Clear</button>
+</div>
+</section>
+<section class="view scroll" id="v-energy" hidden></section>
+<section class="view scroll" id="v-vars" hidden></section>
+<section class="view scroll" id="v-help" hidden></section>
+</main>
+<div id="pad" role="group" aria-label="Keypad"></div>
+</div>
+<div id="sheet" hidden></div>
+<div id="toast" hidden></div>
+<input id="sysin" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="go" aria-hidden="true" tabindex="-1">
+<script type="module" src="app.js"></script>
+</body>
+</html>
