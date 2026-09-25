@@ -1,9 +1,9 @@
 /*
- EE Calc — player interface (loaded with the player): the browser (radio logos by country, lofi, audiobooks),
- the player bar (docked at the bottom of Focus, and in the sheet the top-right bubble opens).
- Parts that live in a sheet unsubscribe themselves once they are no longer in the page.
+ EE Calc — player interface (loaded with the player): the Media screen (☰ menu) with the browser (radio logos by
+ country, lofi, audiobooks) and the player bar docked at its bottom; on the other screens the top-right bubble opens
+ the same bar in a sheet. Parts that live in a sheet unsubscribe themselves once they are no longer in the page.
 */
-import { player, CATALOG, COUNTRIES, flag, searchBooks, loadBook, cover } from './media.js';
+import { player, CATALOG, COUNTRIES, BOOK_GROUPS, flag, searchBooks, loadBook, cover } from './media.js';
 import * as Pr from './profile.js';
 import { h, toast, sheet, closeSheet } from './ui.js';
 import { icon } from './icons.js';
@@ -106,7 +106,7 @@ export function bar() {
 }
 
 // ═════════════════════════════════════════════════════════ browser
-const S = { tab: 'radio', cc: null, q: '', results: null, busy: false };
+const S = { tab: 'radio', cc: null, bg: null, q: '', results: null, busy: false };
 export function browser(root) {
   const tabs = h('div', 'mtabs'), body = h('div', 'mbody');
   const TABS = [['radio', 'radio', 'Radio'], ['lofi', 'music', 'Lofi'], ['book', 'book', 'Audiobooks']];
@@ -137,20 +137,23 @@ export function browser(root) {
     }
     return g;
   }
-  function radio() {
-    const chips = h('div', 'chips'), used = COUNTRIES.filter(([c]) => ITEMS.radio.some(s => s.cc === c));
-    const chip = (cc, label, ic) => {
-      const b = h('button', 'cchip' + (S.cc === cc ? ' on' : ''));
-      if (ic) b.appendChild(icon(ic)); else b.appendChild(h('span', 'flag', flag(cc)));
+  /** A row of filter chips: entries [key, label, icon] (icon undefined: the key's flag; null: none). */
+  function chips(entries, cur, pick) {
+    const row = h('div', 'chips');
+    for (const [k, label, ic] of entries) {
+      const b = h('button', 'cchip' + (cur === k ? ' on' : ''));
+      if (ic) b.appendChild(icon(ic)); else if (ic === undefined) b.appendChild(h('span', 'flag', flag(k)));
       b.appendChild(h('span', null, label));
-      b.addEventListener('click', () => { S.cc = cc; render(); });
-      return b;
-    };
-    chips.appendChild(chip(null, 'All', 'globe'));
-    for (const [cc, name] of used) chips.appendChild(chip(cc, name));
+      b.addEventListener('click', () => { pick(k); render(); });
+      row.appendChild(b);
+    }
+    requestAnimationFrame(() => { const on = row.querySelector('.on'); if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' }); });
+    return row;
+  }
+  function radio() {
+    const used = COUNTRIES.filter(([c]) => ITEMS.radio.some(s => s.cc === c));
     const list = S.cc ? ITEMS.radio.filter(s => s.cc === S.cc) : ITEMS.radio;
-    body.append(chips, grid(list));
-    requestAnimationFrame(() => { const on = chips.querySelector('.on'); if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' }); });
+    body.append(chips([[null, 'All', 'globe'], ...used.map(([cc, name]) => [cc, name])], S.cc, k => { S.cc = k; }), grid(list));
   }
   function books() {
     const saved = Pr.get() && Pr.get().media.book;
@@ -190,7 +193,10 @@ export function browser(root) {
     };
     if (S.busy) body.appendChild(h('div', 'mini', 'Searching…'));
     else if (S.results) { if (S.results.length) list(`Results for “${S.q}”`, S.results); else body.appendChild(h('div', 'mini', `Nothing found for “${S.q}”.`)); }
-    if (!S.results || !S.results.length) list('Popular classics', CATALOG.books);
+    if (!S.results || !S.results.length) {                // the catalogue by category; All shows each under its heading
+      body.appendChild(chips([[null, 'All', 'book'], ...BOOK_GROUPS.map(([g, label]) => [g, label, null])], S.bg, k => { S.bg = k; }));
+      for (const [g, , head] of BOOK_GROUPS) if (!S.bg || S.bg === g) list(head, CATALOG.books.filter(b => b.g === g));
+    }
     body.appendChild(h('div', 'mini', 'LibriVox recordings are public domain, read by volunteers, and streamed from the Internet Archive.'));
   }
   function render() {
@@ -233,11 +239,25 @@ function openBook(id) {
   }, () => { if (box.isConnected) head.lastChild.textContent = navigator.onLine ? "This audiobook can't be loaded right now." : 'Needs an internet connection.'; });
 }
 
-/** The sheet the top-right bubble opens: the player bar and a way to the browser. */
+// ═════════════════════════════════════════════════════════ the Media screen
+/** The Media screen: the browser, with the player bar docked at the bottom. -> { show, hide } */
+export function screen(root) {
+  const wrap = h('div', 'mwrap'), scroll = h('div', 'mscroll scroll'), dock = h('div', 'mdock');
+  scroll.appendChild(wrap); dock.appendChild(bar());
+  root.replaceChildren(scroll, dock);
+  const b = browser(wrap);
+  let visible = false;
+  // the offline note and "Continue listening" follow the connection and the saved position
+  const again = () => { if (visible) b.render(); };
+  window.addEventListener('online', again); window.addEventListener('offline', again);
+  return { show() { visible = true; b.render(); }, hide() { visible = false; } };
+}
+
+/** The sheet the top-right bubble opens: the player bar and a way to the Media screen. */
 export function openPlayer(browse) {
   sheet(null, [], box => {
     box.classList.add('playersheet');
     box.appendChild(bar());
-    if (browse) { const b = h('button', 'btn wide2'); b.append(icon('list'), h('span', null, 'Browse stations and audiobooks')); b.addEventListener('click', () => { closeSheet(); browse(); }); box.appendChild(b); }
+    if (browse) { const b = h('button', 'btn wide2'); b.append(icon('list'), h('span', null, 'Radio, lofi and audiobooks')); b.addEventListener('click', () => { closeSheet(); browse(); }); box.appendChild(b); }
   });
 }

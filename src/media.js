@@ -14,14 +14,16 @@
  artwork and play / pause / next / previous through the Media Session API.
 */
 import * as Pr from './profile.js';
-import { CATALOG, COUNTRIES } from './catalog.js';
+import { CATALOG, COUNTRIES, BOOK_GROUPS } from './catalog.js';
 
-export { CATALOG, COUNTRIES };
+export { CATALOG, COUNTRIES, BOOK_GROUPS };
 export const flag = cc => String.fromCodePoint(...[...cc].map(c => 0x1f1a5 + c.charCodeAt(0)));   // 'PT' → 🇵🇹
 
 // ═════════════════════════════════════════════════════════ LibriVox (public domain) through archive.org
 const IA = 'https://archive.org';
-const clean = s => String(s == null ? '' : Array.isArray(s) ? s[0] : s).replace(/\s+/g, ' ').trim().slice(0, 140);
+// archive.org metadata is plain text, but some of it carries HTML entities ("Cam&otilde;es"): decoded as text only
+const entities = s => (s.includes('&') && typeof DOMParser !== 'undefined' ? new DOMParser().parseFromString(s, 'text/html').documentElement.textContent : s);
+const clean = s => entities(String(s == null ? '' : Array.isArray(s) ? s[0] : s)).replace(/\s+/g, ' ').trim().slice(0, 140);
 // 'Pride and Prejudice (version 3)', 'Alice's Adventures in Wonderland, by Lewis Carroll' -> the bare title
 const cleanTitle = s => clean(s).replace(/\s*\(version \d+\)|\s*-?\s*LibriVox.*$|,\s+by\s+[^,]+$/gi, '');
 async function getJSON(url) {
@@ -257,3 +259,4 @@ class Player {
   }
 }
 export const player = new Player();
+Pr.onChange(w => { if (w === 'reset') player.stop(); });   // Profile → Reset also stops the player

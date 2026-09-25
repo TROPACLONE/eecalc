@@ -18,14 +18,14 @@ const MAX_ITEMS = 200, MAX_INPUTS = 500;
 const PREVIEW_MIN = 40, PREVIEW_MAX = 1200, SLOW_MS = 120, LONG_PRESS = 480;
 const DIGITS = [6, 8, 10, 12, 15, 20, 30, 40];
 const NOTATIONS = [['auto', 'Normal'], ['eng', 'Engineering'], ['sci', 'Scientific']];
-const VIEWS = ['calc', 'energy', 'net', 'vars', 'focus', 'chat', 'profile', 'help'];
+const VIEWS = ['calc', 'energy', 'net', 'vars', 'focus', 'media', 'chat', 'profile', 'help'];
 const NET_TITLES = { case: 'Case editor', pf: 'Power flow', sc: 'Short circuit', n1: 'Contingency (N-1)' };
 
 const eng = new E.Engine();
 const st = { unit: 'deg', digits: 10, notation: 'auto', view: 'calc', sub: null, fn: false };
 const items = [], inputs = [];
 let hpos = null, draft = '', nextId = 0;
-let netMod = null, chatMod = null, focusMod = null, energy = null, mediaMod = null;
+let netMod = null, chatMod = null, focusMod = null, energy = null, mediaMod = null, mediaView = null;
 
 // ═════════════════════════════════════════════════════════ shared context for the lazily loaded screens
 const ctx = {
@@ -326,7 +326,7 @@ const menuOpen = { net: false };
 function titleOf() {
   if (st.view === 'energy') return energy && energy.tool ? energy.tool.title : 'Energy tools';
   if (st.view === 'net') return NET_TITLES[st.sub] || 'Network';
-  return { calc: 'Calculator', vars: 'Variables', focus: 'Focus', chat: 'Chat', profile: 'Profile', help: 'Help' }[st.view];
+  return { calc: 'Calculator', vars: 'Variables', focus: 'Focus', media: 'Media', chat: 'Chat', profile: 'Profile', help: 'Help' }[st.view];
 }
 function setTitle() {
   $('title').textContent = titleOf();
@@ -357,7 +357,9 @@ function openMenu() {
     if (menuOpen.net) for (const [k, t] of Object.entries(NET_TITLES)) item(t, go('net', k), 'sub' + (st.view === 'net' && st.sub === k ? ' cur' : ''));
     box.appendChild(h('div', 'sep'));
     const r = Pr.get() && Pr.get().run, left = Pr.remaining();
-    item('Focus', go('focus'), st.view === 'focus' ? 'cur' : '', left != null ? Pr.fmtTime(left) : r && r.pending ? 'Next session ready' : 'Pomodoro · listen', 'focus');
+    item('Focus', go('focus'), st.view === 'focus' ? 'cur' : '', left != null ? Pr.fmtTime(left) : r && r.pending ? 'Next session ready' : 'Pomodoro timer', 'focus');
+    const p = mediaMod && mediaMod.player;
+    item('Media', go('media'), st.view === 'media' ? 'cur' : '', p && p.active ? `${p.playing ? 'Playing' : 'Paused'}: ${p.item.title}` : 'Radio · lofi · audiobooks', 'phones');
     const chat = item('Chat', online ? go('chat') : () => toast('The chat needs an internet connection'),
       (online ? '' : 'locked') + (st.view === 'chat' ? ' cur' : ''), online ? 'Global room' : 'Offline', online ? 'chat' : 'lock');
     if (online && st.unread) chat.querySelector('.ml').appendChild(h('span', 'badge', st.unread > 9 ? '9+' : String(st.unread)));
@@ -399,13 +401,13 @@ async function show(view, sub = null) {
     netMod.show(sub || 'case');
   } else if (netMod) netMod.hide();
   if (view === 'focus') {
-    if (!focusMod) {
-      const m = await lazy('v-focus', () => import('./focusui.js')); if (!m) return;
-      if (!focusMod) focusMod = m.init(ctx, $('v-focus'));
-      await loadMedia(); if (moved()) return;
-    }
+    if (!focusMod) { const m = await lazy('v-focus', () => import('./focusui.js')); if (!m) return; if (!focusMod) focusMod = m.init(ctx, $('v-focus')); if (moved()) return; }
     focusMod.show();
   } else if (focusMod) focusMod.hide();
+  if (view === 'media') {
+    if (!mediaView) { const m = await lazy('v-media', loadMedia); if (!m) return; if (!mediaView) mediaView = m.ui.screen($('v-media')); if (moved()) return; }
+    mediaView.show();
+  } else if (mediaView) mediaView.hide();
   if (view === 'profile') renderProfile();
   if (view === 'chat') {
     if (!chatMod) { const m = await lazy('v-chat', () => import('./chatui.js')); if (!m) return; if (!chatMod) chatMod = m.init(ctx, $('v-chat')); if (moved()) return; }
@@ -418,7 +420,7 @@ async function show(view, sub = null) {
   updateMini();
 }
 
-// ═════════════════════════════════════════════════════════ player bubble (top right, outside Focus)
+// ═════════════════════════════════════════════════════════ player bubble (top right, outside Media)
 async function loadMedia() {
   if (!mediaMod) {
     const [m, ui] = await Promise.all([import('./media.js'), import('./mediaui.js')]);
@@ -429,14 +431,14 @@ async function loadMedia() {
 let miniKey = '';
 function updateMini() {
   const b = $('mini'), p = mediaMod && mediaMod.player;
-  b.hidden = !p || !p.active || st.view === 'focus';
+  b.hidden = !p || !p.active || st.view === 'media';
   if (b.hidden) return;
   const key = `${p.item.kind}:${p.item.id}:${p.item.logo}`;
   if (key !== miniKey) { miniKey = key; b.replaceChildren(mediaMod.ui.art(p.item)); }
   b.classList.toggle('playing', p.playing);
   b.setAttribute('aria-label', `${p.playing ? 'Playing' : 'Paused'}: ${p.item.title}`);
 }
-$('mini').addEventListener('click', () => loadMedia().then(m => m.ui.openPlayer(() => show('focus'))));
+$('mini').addEventListener('click', () => loadMedia().then(m => m.ui.openPlayer(() => show('media')), () => toast('The player could not be loaded')));
 
 function refreshBar() {
   $('s-unit').textContent = st.unit === 'deg' ? 'Degrees' : 'Radians';
@@ -749,7 +751,9 @@ neutral (Xn, 0 = solid), pu on the system base. Zero sequence of branches:
 line (R0, X0, B0), YNyn (series), YNd (shunt at the from bus), Dyn (shunt at
 the to bus), Yd / Dy / Dd / Yy (open). Prefault: flat 1,0 pu (classical:
 no loads, no charging) or from the power flow (loads as constant impedance,
-positive and negative sequence only). Δ–Y phase shifts are not applied.
+positive and negative sequence only). Across Δ–Y transformers the phase
+voltages include the ±30° shift (clock 11: Dyn11, YNd11), unless the
+branch has its own phase shift.
 
 Contingency (N-1): every branch and generator outage is solved and
 verified, then ranked by islanding, divergence, violations and loading.
@@ -759,14 +763,15 @@ break (15 min) after 4 sessions; all adjustable. XP: 2 per focus minute and
 1 per break minute when a session completes (stopping or skipping earns
 nothing), +25 per full set, and 1 per 2 minutes using the app. Level L → L+1
 needs 100·L XP. The timer keeps running if you leave the app.
-Durations: the sliders button next to the timer.`],
-  ['', 'Listen', `Radio stations from several countries (filter by country), lofi streams
-and LibriVox audiobooks (public domain, streamed from the Internet
-Archive; search by title or author). Everything needs internet.
-Playing is independent of Focus: it continues until you pause or stop it.
-Outside Focus, the round button at the top right opens the player.
-Audiobooks remember the chapter and position where you stopped.
-If a station doesn't allow volume control, use the device buttons.`],
+Durations: below the timer, when no phase is running.`],
+  ['', 'Media', `☰ → Media: radio stations from several countries (filter by country),
+lofi streams and LibriVox audiobooks (public domain, streamed from the
+Internet Archive; browse by category or search by title or author).
+Everything needs internet. Playing is independent of Focus: it continues
+until you pause or stop it. On the other screens, the round button at the
+top right opens the player. Audiobooks remember the chapter and position
+where you stopped. If a station doesn't allow volume control, use the
+device buttons.`],
   ['', 'Chat', `A global public room: anyone using EE Calc can read and write. Text and
 emoji only: no files, images or links. Messages are relayed by a free
 public MQTT server and exist only while delivered. Your name, device tag

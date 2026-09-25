@@ -11,14 +11,14 @@ A web app installed on the Home Screen: it opens full screen, works offline (exc
   - power flow (Newton-Raphson, fast-decoupled, Gauss-Seidel, DC);
   - short circuit (3φ, SLG, LL, LLG), with the ±30° shift of Δ-Y transformers (taken as clock 11: Dyn11, YNd11) in the phase voltages;
   - N-1 contingency.
-- **Focus:** a Pomodoro timer with XP and levels.
-- **Player:** 27 radio stations from 9 countries, 6 lofi streams and LibriVox audiobooks (search, chapters, resume where you stopped). It keeps playing outside Focus until paused or stopped.
+- **Focus:** a Pomodoro timer with XP and levels; its durations are set on the same screen.
+- **Media** (its own screen in the ☰ menu): 27 radio stations from 9 countries, 14 lofi and ambient streams, and 52 LibriVox audiobooks in five categories (classics; adventure, mystery and science fiction; science and engineering; philosophy; Portuguese), plus search over all of LibriVox, chapters and resume where you stopped. It keeps playing on every screen until paused or stopped; elsewhere a round button at the top right opens the player.
 - **Chat:** a global room, text and emoji only, showing name, device tag and level. It is locked when offline.
 - **Privacy:** only a small profile (name, tag, XP, Focus settings) is kept on the device; Profile → Reset deletes it.
 
 ## Files
 
-- `dist/` (built, not in the repository): the 21 files that are published, about 266 KB in total, plus 33 station logos (54 KB) that are cached the first time they are shown. `app.js` is the calculator shell; the `c-….js` files are the engine and the Network, Chat, Focus and machine-tool modules (the last four load when first used).
+- `dist/` (built, not in the repository): the 20 files that are published, about 279 KB in total, plus 41 station logos (74 KB) that are cached the first time they are shown. `app.js` is the calculator shell; the `c-….js` files are the engine and the Network, Chat, Focus, Media and machine-tool modules (the last five load when first used).
 - `src/`: the source code.
   - `engine.js`: the verified multi-precision engine (decimal.js).
   - `energy.js`: the energy tools.
