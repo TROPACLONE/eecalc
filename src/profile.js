@@ -1,8 +1,9 @@
 /*
  EE Calc — profile, XP / levels and the Pomodoro engine.
  The profile is the ONLY thing the app keeps on the device (one localStorage entry, KEY below): name,
- device tag, XP, Focus settings, radio choice and a running Focus/break session (so it survives iOS
- closing the app in the background). Everything else stays in RAM. "Reset profile" deletes the entry.
+ device tag, XP, Focus settings, a running Focus/break session (so it survives iOS closing the app in the
+ background) and the player's volume, last station and audiobook position (book, chapter, seconds).
+ Everything else stays in RAM. "Reset profile" deletes the entry.
 
  XP: 2 per focused minute and 1 per break minute, credited when a session completes (a stopped or skipped
  session earns nothing); +25 for completing a full set of focus sessions; 1 per 2 minutes of foreground use.
@@ -39,8 +40,14 @@ function sanitize(o) {                          // never trust what is on disk
     pending: !!o.run.pending } : null;
   return { v: 1, name: o.name.trim(), tag: o.tag, xp: int(o.xp, [0, 1e9], 0),
     pomo: Object.fromEntries(Object.keys(DEFAULTS).map(k => [k, int(s[k], LIMITS[k], DEFAULTS[k])])),
-    set: int(o.set, [0, 7], 0), radio: { st: ['off', 'observador', 'rfm', 'comercial'].includes(o.radio?.st) ? o.radio.st : 'rfm',
-      vol: int(o.radio?.vol, [0, 100], 60) }, run };
+    set: int(o.set, [0, 7], 0), media: media(o.media || { vol: o.radio?.vol }), run };
+}
+const ID_OK = /^[A-Za-z0-9._-]{1,100}$/;       // station ids and archive.org identifiers
+function media(m) {
+  const b = m.book;
+  return { vol: int(m.vol, [0, 100], 60),
+    last: typeof m.last === 'string' && /^(radio|lofi|book):/.test(m.last) && ID_OK.test(m.last.slice(m.last.indexOf(':') + 1)) ? m.last : null,
+    book: b && ID_OK.test(b.id) ? { id: b.id, ch: int(b.ch, [0, 9999], 0), t: Number.isFinite(b.t) && b.t >= 0 && b.t < 1e6 ? Math.floor(b.t) : 0 } : null };
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(P)); } catch { /* storage full or disabled: keep going in RAM */ } }
 
@@ -58,7 +65,8 @@ export function create(name) {
 export function rename(name) { const e = checkName(name); if (e) return e; P.name = name.trim(); save(); emit('profile'); return null; }
 export function reset() { try { localStorage.removeItem(KEY); } catch { /* ignore */ } P = null; emit('reset'); }
 export function setPomo(k, v) { P.pomo[k] = int(v, LIMITS[k], P.pomo[k]); save(); emit('pomo'); }
-export function setRadio(r) { Object.assign(P.radio, r); save(); emit('radio'); }
+/** Player settings (volume, last item, audiobook position); quiet: no change event (position saves while playing). */
+export function setMedia(m, quiet) { if (!P) return; P.media = media({ ...P.media, ...m }); save(); if (!quiet) emit('media'); }
 
 export function addXP(n, why) {
   if (!P || !(n > 0)) return;

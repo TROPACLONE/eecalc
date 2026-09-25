@@ -5,12 +5,14 @@
  Privacy: the calculator stores nothing (no cookies, localStorage, IndexedDB). History, variables and
  network cases live in memory and vanish when the app is closed; a case is kept only if you save it
  to a file yourself. The service worker caches only the app's own files for offline use. The chat
- is the only feature that uses the network, and only while it is open.
+ (while it is open) and the player (while something plays or a list is loaded) are the only features that
+ use the network.
 */
 import * as E from './engine.js';
 import * as N from './energy.js';
 import * as Pr from './profile.js';
 import { $, h, Editor, activate, activeEditor, onTap, sheet, closeSheet, toast, copy, segmented } from './ui.js';
+import { icon } from './icons.js';
 
 const MAX_ITEMS = 200, MAX_INPUTS = 500;
 const PREVIEW_MIN = 40, PREVIEW_MAX = 1200, SLOW_MS = 120, LONG_PRESS = 480;
@@ -23,7 +25,7 @@ const eng = new E.Engine();
 const st = { unit: 'deg', digits: 10, notation: 'auto', view: 'calc', sub: null, fn: false };
 const items = [], inputs = [];
 let hpos = null, draft = '', nextId = 0;
-let netMod = null, chatMod = null, focusMod = null, energy = null;
+let netMod = null, chatMod = null, focusMod = null, energy = null, mediaMod = null;
 
 // ═════════════════════════════════════════════════════════ shared context for the lazily loaded screens
 const ctx = {
@@ -309,7 +311,7 @@ function functionsSheet() {
 }
 
 // ═════════════════════════════════════════════════════════ menu and navigation
-const menuOpen = { energy: false, net: false };
+const menuOpen = { net: false };
 function titleOf() {
   if (st.view === 'energy') return energy && energy.tool ? energy.tool.title : 'Energy tools';
   if (st.view === 'net') return NET_TITLES[st.sub] || 'Network';
@@ -323,36 +325,34 @@ function openMenu() {
   const online = navigator.onLine;
   sheet(null, [], box => {
     box.classList.add('menu');
-    const item = (label, fn, cls, note) => {
+    const item = (label, fn, cls, note, ic) => {
       const b = h('button', 'mi' + (cls ? ' ' + cls : ''));
-      b.appendChild(h('span', null, label));
+      if (ic) b.appendChild(icon(ic));
+      b.appendChild(h('span', 'ml', label));
       if (note) b.appendChild(h('small', null, note));
       b.addEventListener('click', fn);
       box.appendChild(b);
       return b;
     };
     const go = (v, s) => () => { closeSheet(); show(v, s); };
-    const group = (k, label) => item(label, () => { menuOpen[k] = !menuOpen[k]; closeSheet(); openMenu(); }, 'grp' + (menuOpen[k] ? ' open' : ''));
-    item('Calculator', go('calc'), st.view === 'calc' ? 'cur' : '');
-    item('Variables', go('vars'), st.view === 'vars' ? 'cur' : '');
-    group('energy', 'Energy tools');
-    if (menuOpen.energy) {
-      for (const [g, tools] of N.GROUPS) {
-        box.appendChild(h('div', 'mh', g));
-        for (const t of tools) item(t.title, go('energy', t.id), 'sub');
-      }
-      box.appendChild(h('div', 'mh', 'Reference'));
-      item('Typeable functions', go('help', 'energy'), 'sub');
-    }
-    group('net', 'Network');
+    const group = (k, label, ic) => {
+      const b = item(label, () => { menuOpen[k] = !menuOpen[k]; closeSheet(); openMenu(); }, 'grp' + (menuOpen[k] ? ' open' : ''), null, ic);
+      b.appendChild(icon(menuOpen[k] ? 'down' : 'right', 'chev')); b.setAttribute('aria-expanded', String(menuOpen[k]));
+    };
+    item('Calculator', go('calc'), st.view === 'calc' ? 'cur' : '', null, 'calc');
+    item('Variables', go('vars'), st.view === 'vars' ? 'cur' : '', null, 'vars');
+    item('Energy tools', go('energy', 'list'), st.view === 'energy' ? 'cur' : '', `${N.TOOLS.length} tools`, 'energy');
+    group('net', 'Network', 'net');
     if (menuOpen.net) for (const [k, t] of Object.entries(NET_TITLES)) item(t, go('net', k), 'sub' + (st.view === 'net' && st.sub === k ? ' cur' : ''));
+    box.appendChild(h('div', 'sep'));
     const r = Pr.get() && Pr.get().run, left = Pr.remaining();
-    item('Focus', go('focus'), st.view === 'focus' ? 'cur' : '', left != null ? Pr.fmtTime(left) : r && r.pending ? 'Next session ready' : 'Pomodoro');
-    const chat = item(online ? 'Chat' : 'Chat  🔒', online ? go('chat') : () => toast('The chat needs an internet connection'),
-      (online ? '' : 'locked') + (st.view === 'chat' ? ' cur' : ''), online ? 'Global room' : 'Offline');
-    if (online && st.unread) chat.firstChild.appendChild(h('span', 'badge', st.unread > 9 ? '9+' : String(st.unread)));
-    if (Pr.get()) item('Profile', go('profile'), st.view === 'profile' ? 'cur' : '', `Level ${Pr.levelOf(Pr.get().xp)}`);
-    item('Help', go('help'), st.view === 'help' ? 'cur' : '');
+    item('Focus', go('focus'), st.view === 'focus' ? 'cur' : '', left != null ? Pr.fmtTime(left) : r && r.pending ? 'Next session ready' : 'Pomodoro · listen', 'focus');
+    const chat = item('Chat', online ? go('chat') : () => toast('The chat needs an internet connection'),
+      (online ? '' : 'locked') + (st.view === 'chat' ? ' cur' : ''), online ? 'Global room' : 'Offline', online ? 'chat' : 'lock');
+    if (online && st.unread) chat.querySelector('.ml').appendChild(h('span', 'badge', st.unread > 9 ? '9+' : String(st.unread)));
+    box.appendChild(h('div', 'sep'));
+    if (Pr.get()) item('Profile', go('profile'), st.view === 'profile' ? 'cur' : '', `Level ${Pr.levelOf(Pr.get().xp)}`, 'profile');
+    item('Help', go('help'), st.view === 'help' ? 'cur' : '', null, 'help');
   });
 }
 $('menu-btn').addEventListener('click', openMenu);
@@ -365,7 +365,7 @@ async function show(view, sub = null) {
   if (view === 'calc') activate(main);
   if (view === 'energy') {
     if (!energy) energy = new EnergyView($('v-energy'));
-    if (sub && N.TOOL_BY_ID[sub]) energy.open(N.TOOL_BY_ID[sub]); else if (!energy.tool) energy.list(); else energy.focus();
+    if (sub && N.TOOL_BY_ID[sub]) energy.open(N.TOOL_BY_ID[sub]); else if (sub === 'list' || !energy.tool) energy.list(); else energy.focus();
   }
   if (view === 'vars') renderVars();
   if (view === 'help') renderHelp(sub);
@@ -374,7 +374,7 @@ async function show(view, sub = null) {
     netMod.show(sub || 'case');
   } else if (netMod) netMod.hide();
   if (view === 'focus') {
-    if (!focusMod) { $('v-focus').replaceChildren(h('div', 'hint pad16', 'Loading…')); focusMod = (await import('./focusui.js')).init(ctx, $('v-focus')); }
+    if (!focusMod) { $('v-focus').replaceChildren(h('div', 'hint pad16', 'Loading…')); focusMod = (await import('./focusui.js')).init(ctx, $('v-focus')); await loadMedia(); }
     focusMod.show();
   } else if (focusMod) focusMod.hide();
   if (view === 'profile') renderProfile();
@@ -386,7 +386,28 @@ async function show(view, sub = null) {
   if (!['calc', 'energy', 'net'].includes(view)) activate(null);
   setTitle();
   updatePad();
+  updateMini();
 }
+
+// ═════════════════════════════════════════════════════════ player bubble (top right, outside Focus)
+async function loadMedia() {
+  if (!mediaMod) {
+    const [m, ui] = await Promise.all([import('./media.js'), import('./mediaui.js')]);
+    mediaMod = { player: m.player, ui }; m.player.on(updateMini);
+  }
+  return mediaMod;
+}
+let miniKey = '';
+function updateMini() {
+  const b = $('mini'), p = mediaMod && mediaMod.player;
+  b.hidden = !p || !p.active || st.view === 'focus';
+  if (b.hidden) return;
+  const key = `${p.item.kind}:${p.item.id}:${p.item.logo}`;
+  if (key !== miniKey) { miniKey = key; b.replaceChildren(mediaMod.ui.art(p.item)); }
+  b.classList.toggle('playing', p.playing);
+  b.setAttribute('aria-label', `${p.playing ? 'Playing' : 'Paused'}: ${p.item.title}`);
+}
+$('mini').addEventListener('click', () => loadMedia().then(m => m.ui.openPlayer(() => show('focus'))));
 
 function refreshBar() {
   $('s-unit').textContent = st.unit === 'deg' ? 'Degrees' : 'Radians';
@@ -409,14 +430,20 @@ class EnergyView {
   list() {
     this.tool = null; this.pending = null; this.fields = [];
     const box = h('div', 'list');
+    const GI = { Power: 'sine', 'Per unit': 'pu', 'Circuits and lines': 'resistor', Machines: 'motor', Faults: 'fault' };
     for (const [g, tools] of N.GROUPS) {
-      box.appendChild(h('div', 'group', g));
+      const gh = h('div', 'group'); if (GI[g]) gh.appendChild(icon(GI[g])); gh.appendChild(h('span', null, g));
+      box.appendChild(gh);
       for (const t of tools) {
         const b = h('button', 'tool'); b.append(h('b', null, t.title), h('span', null, t.desc));
         b.addEventListener('click', () => show('energy', t.id));
         box.appendChild(b);
       }
     }
+    const ref = h('button', 'tool'); ref.append(h('b', null, 'Typeable functions'), h('span', null, 's3, pf, zbase, pu, y2d, seq… — the same formulas, typed in the calculator.'));
+    ref.addEventListener('click', () => show('help', 'energy'));
+    const rh = h('div', 'group'); rh.append(icon('help'), h('span', null, 'Reference'));
+    box.append(rh, ref);
     this.root.replaceChildren(box); this.root.scrollTop = 0;
     activate(null); setTitle(); updatePad();
   }
@@ -430,8 +457,14 @@ class EnergyView {
     }
     this.pending = null; this.tool = tool;
     const page = h('div', 'page');
-    const back = h('button', 'back', '‹  Energy tools'); back.addEventListener('click', () => this.close());
-    page.append(back, h('h2', null, tool.title), h('p', 'desc', tool.desc));
+    const back = h('button', 'back'); back.append(icon('left'), h('span', null, 'Energy tools')); back.addEventListener('click', () => this.close());
+    const desc = h('p', 'desc', tool.desc);
+    page.append(back, h('h2', null, tool.title), desc);
+    if (tool.desc.length > 150) {                      // long descriptions: two lines, so the inputs stay above the keypad
+      desc.classList.add('clamp');
+      const more = h('button', 'more', 'More'); more.addEventListener('click', () => { const c = desc.classList.toggle('clamp'); more.textContent = c ? 'More' : 'Less'; });
+      page.appendChild(more);
+    }
     const grid = h('div', 'fields'), saved = this.texts[tool.id] || {};
     this.fields = []; this.sel = {};
     for (const f of tool.fields) {
@@ -568,7 +601,7 @@ let chimeCtx = null;
 function chime() {                                   // two soft sine tones; silent if audio isn't unlocked yet
   try {
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
-    const c = (focusMod && focusMod.radio.ctx) || chimeCtx || (chimeCtx = new AC());
+    const c = (mediaMod && mediaMod.player.ctx) || chimeCtx || (chimeCtx = new AC());
     if (c.state !== 'running') return;
     [[660, 0], [880, 0.18]].forEach(([f, t]) => {
       const o = c.createOscillator(), g = c.createGain(), t0 = c.currentTime + t;
@@ -686,7 +719,14 @@ break (15 min) after 4 sessions; all adjustable. XP: 2 per focus minute and
 1 per break minute when a session completes (stopping or skipping earns
 nothing), +25 per full set, and 1 per 2 minutes using the app. Level L → L+1
 needs 100·L XP. The timer keeps running if you leave the app.
-Radio during focus: Observador, RFM or Rádio Comercial (needs internet).`],
+Durations: the sliders button next to the timer.`],
+  ['', 'Listen', `Radio stations from several countries (filter by country), lofi streams
+and LibriVox audiobooks (public domain, streamed from the Internet
+Archive; search by title or author). Everything needs internet.
+Playing is independent of Focus: it continues until you pause or stop it.
+Outside Focus, the round button at the top right opens the player.
+Audiobooks remember the chapter and position where you stopped.
+If a station doesn't allow volume control, use the device buttons.`],
   ['', 'Chat', `A global public room: anyone using EE Calc can read and write. Text and
 emoji only: no files, images or links. Messages are relayed by a free
 public MQTT server and exist only while delivered. Your name, device tag
@@ -698,17 +738,30 @@ shown only when both agree to 42 digits. If they don't, precision
 rises automatically to 140, 260 and 500 digits. Display: 6–40
 digits, rounded half up (2,5 → 3).`],
   ['', 'Privacy', `Only your profile is kept on this device: name, tag, XP, Focus settings,
-radio choice and a running Focus session. Profile → Reset deletes it.
+a running Focus session, the player's volume and last station, and your
+audiobook position. Profile → Reset deletes it.
 No cookies. History, variables and cases are erased when you close the
-app. Only the app's own files are cached, so it works offline. Only the
-chat and the radio use the network.`],
+app. Only the app's own files and station logos are cached, so it works
+offline. Only the chat and the player use the network.`],
 ];
 let helpBuilt = false;
+/** Help text -> paragraphs, and two-column lines ("syntax   meaning") -> a definition grid that wraps cleanly. */
+function helpBlocks(body) {
+  const out = []; let dl = null, para = [];
+  const flush = () => { if (para.length) { out.push(h('p', null, para.join('\n'))); para = []; } };
+  for (const line of body.split('\n')) {
+    const m = /^(\S.*?)\s{3,}(\S.*)$/.exec(line);
+    if (m) { flush(); if (!dl) { dl = h('dl'); out.push(dl); } dl.append(h('dt', null, m[1]), h('dd', null, m[2])); }
+    else { dl = null; if (line.trim()) para.push(line.trim()); else flush(); }
+  }
+  flush();
+  return out;
+}
 function renderHelp(anchor) {
   const root = $('v-help');
   if (!helpBuilt) {
     const box = h('div', 'help');
-    for (const [id, title, body] of HELP) { const t = h('h3', null, title); if (id) t.id = 'help-' + id; box.append(t, document.createTextNode(body)); }
+    for (const [id, title, body] of HELP) { const t = h('h3', null, title); if (id) t.id = 'help-' + id; box.append(t, ...helpBlocks(body)); }
     root.appendChild(box);
     helpBuilt = true;
   }
@@ -729,4 +782,4 @@ if (!(navigator.standalone || matchMedia('(display-mode: standalone)').matches))
   $('install-x').addEventListener('click', () => { $('install').hidden = true; });
 }
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('./sw.js');
-window.__eecalc = { E, N, eng, main, key, show, st, items, ctx, get energy() { return energy; }, get net() { return netMod; }, get chat() { return chatMod; }, get focus() { return focusMod; } };
+window.__eecalc = { E, N, eng, main, key, show, st, items, ctx, get energy() { return energy; }, get net() { return netMod; }, get chat() { return chatMod; }, get focus() { return focusMod; }, get media() { return mediaMod; } };

@@ -1,6 +1,7 @@
 /* EE Calc — chat screen (global public room, text and emoji only, nothing stored). */
 import { Chat, MAX_LEN } from './chat.js';
 import { h, toast } from './ui.js';
+import { icon } from './icons.js';
 
 const MAX_SHOWN = 200;
 
@@ -22,7 +23,8 @@ export function init(ctx, root) {
   const send = h('button', 'btn accent', 'Send');
   form.append(input, send);
   const lock = h('div', 'chatlock');
-  lock.append(h('div', 'lockicon', '🔒'), h('div', null, 'The chat needs an internet connection.'));
+  const li = h('div', 'lockicon'); li.appendChild(icon('lock'));
+  lock.append(li, h('div', null, 'The chat needs an internet connection.'));
   root.replaceChildren(head, note, lock, list, form);
 
   const chat = new Chat((kind, data) => {

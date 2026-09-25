@@ -3,6 +3,7 @@ import * as E from './engine.js';
 import * as NW from './network.js';
 import { EXAMPLES } from './examples.js';
 import { h, Editor, activate, activeEditor, onTap, sheet, toast, copy, segmented, saveFile, openFile } from './ui.js';
+import { icon } from './icons.js';
 
 const TABLE_DIGITS = [4, 6, 8, 10, 12];
 const PF_METHODS = [['nr', 'Newton'], ['fd', 'Fast dec.'], ['gs', 'Gauss-S.'], ['dc', 'DC']];
@@ -36,7 +37,10 @@ export function init(ctx, root) {
     if (issues.length > 12) b.appendChild(h('div', null, `…and ${issues.length - 12} more`));
     return b;
   }
-  function button(label, fn, cls = '') { const b = h('button', 'btn ' + cls, label); b.addEventListener('click', fn); return b; }
+  function button(label, fn, cls = '', ic = null) {
+    const b = h('button', 'btn ' + cls); if (ic) b.appendChild(icon(ic)); b.appendChild(h('span', null, label));
+    b.addEventListener('click', fn); return b;
+  }
   function chip(label, fn) { const b = h('button', 'chip', label); b.addEventListener('click', fn); return b; }
   function valueSheet(title, value, varName) {
     const full = E.fullPrecision(value, 'deg');
@@ -80,8 +84,8 @@ export function init(ctx, root) {
     if (!dirty && !kase._fromFile) badge.textContent = 'Example';
     top.append(name, badge);
     const btns = h('div', 'btnrow');
-    btns.append(button('New', () => discard(() => setCase(starter(), false))), button('Examples', examples),
-      button('Open', openCase), button('Save', saveCase, 'accent'));
+    btns.append(button('New', () => discard(() => setCase(starter(), false)), '', 'filenew'), button('Examples', examples, '', 'book'),
+      button('Open', openCase, '', 'folder'), button('Save', saveCase, 'accent', 'save'));
     const info = h('div', 'caseinfo');
     const act = kase.buses.filter(b => b.type !== 'Off').length;
     info.append(h('span', null, `${act} buses · ${kase.gens.length} generators · ${kase.branches.length} branches · base `));
@@ -105,7 +109,7 @@ export function init(ctx, root) {
         ['Delete row', () => { kase[tab].splice(i, 1); changed(); }, 'danger'],
       ]);
     });
-    const add = button(`+ Add ${tab === 'buses' ? 'bus' : tab === 'gens' ? 'generator' : 'branch'}`, () => { commitCell(); kase[tab].push(NW.blankRow(tab, kase)); changed(); requestAnimationFrame(() => { const tw = scroll.querySelector('.tw'); if (tw) tw.scrollTop = tw.scrollHeight; }); }, 'wide2');
+    const add = button(`Add ${tab === 'buses' ? 'bus' : tab === 'gens' ? 'generator' : 'branch'}`, () => { commitCell(); kase[tab].push(NW.blankRow(tab, kase)); changed(); requestAnimationFrame(() => { const tw = scroll.querySelector('.tw'); if (tw) tw.scrollTop = tw.scrollHeight; }); }, 'wide2', 'plus');
     const hint = h('div', 'mini', 'Tap a cell to edit · touch and hold a row for more · long values scroll sideways');
     scroll.replaceChildren(top, btns, info, tabs, grid, add, hint);
     scroll.classList.add('casemode');
@@ -156,7 +160,7 @@ export function init(ctx, root) {
     commitCell();
     const col = table === 'base' ? { label: 'System base MVA', type: 'num' } : NW.COLUMNS[table].find(c => c.key === key);
     const text = table === 'base' ? kase.base : String(kase[table][row][key] ?? '');
-    const label = table === 'base' ? col.label : `${NW.TABLE_TITLES[table].replace(/s$/, '')} row ${row + 1} · ${col.label}`;
+    const label = table === 'base' ? col.label : `${{ buses: 'Bus', gens: 'Generator', branches: 'Branch' }[table]} row ${row + 1} · ${col.label}`;
     bar.replaceChildren();
     const lab = h('div', 'celllabel', label), edEl = h('div', 'cellval');
     const ok = h('button', 'cellbtn', '✓'), no = h('button', 'cellbtn muted', '✕');
