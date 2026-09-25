@@ -5,7 +5,7 @@
  Volume on iOS only works through Web Audio (HTMLMediaElement.volume is ignored there), and Web Audio needs
  the stream to allow cross-origin access (CORS) — otherwise WebKit plays silence. So each source is first tried
  through a GainNode; if it fails to load, or stays digitally silent for 4 s, it is reopened directly (device
- volume buttons only) for the rest of the session.
+ volume buttons only) for the rest of the session. Streams the catalog marks cors: false open directly at once.
 
  Resources: one <audio> element at a time, created on play and fully released (pause, unload, disconnect) on
  stop. Pausing a live stream releases it too (no download in the background); play reopens it at the live edge.
@@ -22,6 +22,8 @@ export const flag = cc => String.fromCodePoint(...[...cc].map(c => 0x1f1a5 + c.c
 // ═════════════════════════════════════════════════════════ LibriVox (public domain) through archive.org
 const IA = 'https://archive.org';
 const clean = s => String(s == null ? '' : Array.isArray(s) ? s[0] : s).replace(/\s+/g, ' ').trim().slice(0, 140);
+// 'Pride and Prejudice (version 3)', 'Alice's Adventures in Wonderland, by Lewis Carroll' -> the bare title
+const cleanTitle = s => clean(s).replace(/\s*\(version \d+\)|\s*-?\s*LibriVox.*$|,\s+by\s+[^,]+$/gi, '');
 async function getJSON(url) {
   const r = await fetch(url, { credentials: 'omit', cache: 'no-store' });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -37,21 +39,26 @@ export async function searchBooks(q) {
     '&sort[]=downloads+desc&rows=40&page=1&output=json';
   const j = await getJSON(url);
   return (j.response && j.response.docs || []).filter(d => /^[A-Za-z0-9._-]{1,100}$/.test(d.identifier))
-    .map(d => ({ id: d.identifier, title: clean(d.title).replace(/\s*\(version \d+\)|\s*-?\s*LibriVox.*$/i, ''), author: clean(d.creator) }));
+    .map(d => ({ id: d.identifier, title: cleanTitle(d.title), author: clean(d.creator) }));
 }
 const bookCache = new Map();
+// '1133.07', '18:52' or '1:02:03' -> seconds
+const secsOf = s => String(s || '').split(':').reduce((a, x) => a * 60 + Number(x), 0) || 0;
 /** Chapters of a LibriVox item: its 64 kbit/s MP3 files in track order. -> { id, title, author, chapters: [{ title, url, secs }] } */
 export async function loadBook(id) {
   if (bookCache.has(id)) return bookCache.get(id);
   const j = await getJSON(`${IA}/metadata/${encodeURIComponent(id)}`);
-  const files = (j.files || []).filter(f => /\.mp3$/i.test(f.name) && /64kb/i.test(f.name + ' ' + (f.format || '')));
-  const track = f => parseInt(String(f.track || '').split('/')[0], 10);
-  files.sort((a, b) => (track(a) || 0) - (track(b) || 0) || a.name.localeCompare(b.name, 'en', { numeric: true }));
+  const all = j.files || [], byName = new Map(all.map(f => [f.name, f]));
+  // the 64 kbit/s copies are derivatives: their track number (and a length in seconds) is on the original file
+  const files = all.filter(f => /\.mp3$/i.test(f.name) && /64kb/i.test(f.name + ' ' + (f.format || '')))
+    .map(f => ({ f, o: byName.get(f.original) || f }));
+  const track = x => parseInt(String(x.f.track || x.o.track || '').split('/')[0], 10) || 0;
+  files.sort((a, b) => track(a) - track(b) || a.f.name.localeCompare(b.f.name, 'en', { numeric: true }));
   if (!files.length) throw new Error('no chapters');
   const md = j.metadata || {};
-  const book = { id, title: clean(md.title).replace(/\s*\(version \d+\)|\s*-?\s*LibriVox.*$/i, ''), author: clean(md.creator),
-    chapters: files.slice(0, 400).map((f, i) => ({ title: clean(f.title) || `Chapter ${i + 1}`,
-      url: `${IA}/download/${encodeURIComponent(id)}/${f.name.split('/').map(encodeURIComponent).join('/')}`, secs: Math.round(Number(f.length)) || 0 })) };
+  const book = { id, title: cleanTitle(md.title), author: clean(md.creator),
+    chapters: files.slice(0, 400).map(({ f, o }, i) => ({ title: clean(f.title || o.title) || `Chapter ${i + 1}`,
+      url: `${IA}/download/${encodeURIComponent(id)}/${f.name.split('/').map(encodeURIComponent).join('/')}`, secs: Math.round(secsOf(o.length || f.length)) })) };
   if (bookCache.size > 20) bookCache.delete(bookCache.keys().next().value);
   bookCache.set(id, book);
   return book;
@@ -96,6 +103,8 @@ class Player {
     if (!this.ctx && AC) this.ctx = new AC();
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
   }
+  /** Through the gain path unless the stream is known not to allow CORS (catalog cors: false) or already failed it. */
+  useGain(item) { return !!this.ctx && item.cors !== false && !this.noGain.has(item.url); }
   /** Plays an item (inside a tap); list = the items that next / previous step through. */
   play(item, list) {
     this.unlock();
@@ -103,7 +112,7 @@ class Player {
     this.item = item; if (list) this.list = list;
     this.metadata();
     if (item.kind !== 'book') Pr.setMedia({ last: `${item.kind}:${item.id}` }, true);
-    this.open(!!this.ctx && !this.noGain.has(item.url), item.at || 0);
+    this.open(this.useGain(item), item.at || 0);
   }
   /** Plays chapter ch of a loaded book from t seconds. */
   playBook(book, ch = 0, t = 0) {
@@ -179,7 +188,7 @@ class Player {
     if (!this.item) return;
     this.unlock();
     if (this.el && !this.item.live) { this.el.play().catch(() => this.emit('tap')); return; }   // its 'playing' event reports the state
-    this.open(!!this.ctx && !this.noGain.has(this.item.url), this.item.at || 0);
+    this.open(this.useGain(this.item), this.item.at || 0);
   }
   toggle() { if (this.playing) this.pause(); else this.resume(); }
   stop() { this.savePos(); this.release(true); this.item = null; this.metadata(); this.emit('off'); }

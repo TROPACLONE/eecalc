@@ -11,13 +11,14 @@ A web app installed on the Home Screen: it opens full screen, works offline (exc
   - power flow (Newton-Raphson, fast-decoupled, Gauss-Seidel, DC);
   - short circuit (3φ, SLG, LL, LLG);
   - N-1 contingency.
-- **Focus:** a Pomodoro timer with XP and levels, and Portuguese radio (Observador, RFM, Rádio Comercial) while you focus.
+- **Focus:** a Pomodoro timer with XP and levels.
+- **Player:** 27 radio stations from 9 countries, 6 lofi streams and LibriVox audiobooks (search, chapters, resume where you stopped). It keeps playing outside Focus until paused or stopped.
 - **Chat:** a global room, text and emoji only, showing name, device tag and level. It is locked when offline.
 - **Privacy:** only a small profile (name, tag, XP, Focus settings) is kept on the device; Profile → Reset deletes it.
 
 ## Files
 
-- `dist/` (built, not in the repository): the 16 files that are published, about 233 KB in total. `app.js` is the calculator shell; the `c-….js` files are the engine and the Network, Chat, Focus and machine-tool modules (the last four load when first used).
+- `dist/` (built, not in the repository): the 21 files that are published, about 266 KB in total, plus 33 station logos (54 KB) that are cached the first time they are shown. `app.js` is the calculator shell; the `c-….js` files are the engine and the Network, Chat, Focus and machine-tool modules (the last four load when first used).
 - `src/`: the source code.
   - `engine.js`: the verified multi-precision engine (decimal.js).
   - `energy.js`: the energy tools.
@@ -25,6 +26,7 @@ A web app installed on the Home Screen: it opens full screen, works offline (exc
   - `network.js`: power flow, short circuit and N-1.
   - `chat.js`: the minimal MQTT client, with text-only validation.
   - `profile.js`: the profile, XP and the Pomodoro engine.
+  - `media.js`, `mediaui.js`, `catalog.js`, `logos/`: the player, its interface and the list of stations, lofi streams and audiobooks.
   - `app.js`, `ui.js`, `netui.js`, `chatui.js`, `focusui.js`, `index.html`: the interface.
   - `examples.js`: the MATPOWER example cases (BSD licence).
 - `tests/`: reference data and test scripts.

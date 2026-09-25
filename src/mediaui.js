@@ -17,8 +17,8 @@ function live(el, fn) { const off = player.on(p => { if (el.isConnected) fn(p); 
 
 // items: built once, so next / previous can step through the list an item was chosen from
 const ITEMS = {
-  radio: CATALOG.radio.map(s => ({ kind: 'radio', id: s.id, title: s.name, sub: CC[s.cc] || '', cc: s.cc, logo: s.logo, url: s.url, live: true })),
-  lofi: CATALOG.lofi.map(s => ({ kind: 'lofi', id: s.id, title: s.name, sub: s.note || 'Lofi', logo: s.logo, url: s.url, live: true })),
+  radio: CATALOG.radio.map(s => ({ kind: 'radio', id: s.id, title: s.name, sub: CC[s.cc] || '', cc: s.cc, logo: s.logo, url: s.url, cors: s.cors, live: true })),
+  lofi: CATALOG.lofi.map(s => ({ kind: 'lofi', id: s.id, title: s.name, sub: s.note || 'Lofi', logo: s.logo, url: s.url, cors: s.cors, live: true })),
 };
 export const lastItem = () => {
   const l = Pr.get() && Pr.get().media.last; if (!l) return null;
