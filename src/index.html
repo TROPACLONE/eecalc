@@ -62,6 +62,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .editor .caret { display: inline-block; width: 2px; margin: 0 -1px; background: var(--amber); vertical-align: text-bottom; height: 1.15em; animation: blink 1.05s steps(1) 6; }
 .editor:not(.active) .caret { visibility: hidden; }
 @keyframes blink { 50% { opacity: 0; } }
+@keyframes blink2 { 50% { opacity: 0; } }
 #expr { margin: 2px 12px 0; padding: 10px 12px; font-size: 26px; min-height: 54px; border: 1px solid var(--field); border-radius: 12px; }
 #bar { display: flex; align-items: center; gap: 4px; padding: 4px 10px 0; }
 #bar button { font-size: 15px; color: var(--muted); padding: 0 10px; min-height: 44px; border-radius: 10px; }
@@ -281,7 +282,8 @@ table.grid td.editing { outline: 1px solid var(--amber); outline-offset: -1px; }
 .fclock.run { color: var(--text); }
 .fphase { text-align: center; color: var(--muted); font-size: 15px; margin: 4px 0 12px; }
 .fbar { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; margin: 6px 0 14px; }
-.fbar > div { height: 100%; background: var(--amber); width: 0; transition: width .9s linear; }
+/* scaleX, no transition: the 1 Hz update is compositor-only (no layout); at 25 min the bar moves ~0.2 px/s anyway */
+.fbar > div { height: 100%; background: var(--amber); transform: scaleX(0); transform-origin: left; }
 .fh { font: 600 14px var(--ui); color: var(--muted); margin: 24px 0 8px; }
 .fvolrow { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 10px 0 4px; }
 .fvol { font: 16px var(--mono); min-width: 56px; text-align: center; }

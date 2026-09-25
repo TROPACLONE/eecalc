@@ -36,14 +36,15 @@ export function init(ctx, root) {
     acts.replaceChildren(...a);
   }
   const confirmStop = () => sheet('Stop this session? It earns no XP.', [['Stop session', () => Pr.stop()]]);
+  const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };   // the 1 Hz tick: no layout when nothing changed
   function renderClock() {
     const r = P().run, left = Pr.remaining();
     const total = r && !r.pending ? r.mins * 60000 : Pr.phaseMins(r ? r.ph : 'focus') * 60000;
-    clock.textContent = Pr.fmtTime(left ?? total);
+    setText(clock, Pr.fmtTime(left ?? total));
     const name = !r || r.ph === 'focus' ? 'Focus' : r.ph === 'long' ? 'Long break' : 'Break';
     const n = P().set + (r && r.ph === 'focus' && !r.pending ? 1 : 0);
-    phase.textContent = `${name} · ${r && r.ph !== 'focus' ? 'rest' : `session ${Math.max(1, n)} of ${P().pomo.every}`}${r && r.left != null ? ' · paused' : ''}`;
-    fill.style.width = `${left == null ? 0 : 100 * (1 - left / total)}%`;
+    setText(phase, `${name} · ${r && r.ph !== 'focus' ? 'rest' : `session ${Math.max(1, n)} of ${P().pomo.every}`}${r && r.left != null ? ' · paused' : ''}`);
+    fill.style.transform = `scaleX(${left == null ? 0 : (1 - left / total).toFixed(4)})`;
     clock.classList.toggle('run', !!(r && !r.pending && r.end != null));
   }
   function renderXP() {

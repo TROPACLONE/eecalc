@@ -118,25 +118,35 @@ const historyEl = $('history');
 const EMPTY = 'Type an expression and press =.\n\n<code>34,5∠98 - 63∠3 rad</code>\n<code>Z1 = 3 + j4</code>\n<code>Z1 // 10∠-30</code>\n\n' +
   'Tap a result to reuse it; touch and hold for more.\nMore tools: the ☰ menu.';
 let renderGen = 0;
-/** Newest entries render at once; older ones follow in small batches, so settings changes stay instant. */
+// runs fn after pending input and rendering, without setTimeout's 4 ms clamp on nested calls
+const yieldCh = new MessageChannel(), yieldQ = [];
+yieldCh.port1.onmessage = () => { const fn = yieldQ.shift(); if (fn) fn(); };
+const yieldThen = fn => { yieldQ.push(fn); yieldCh.port2.postMessage(0); };
+/** The entries on screen render at once; older ones follow in the background, so settings changes stay instant. */
 function renderHistory() {
   const gen = ++renderGen;
   historyEl.replaceChildren();
   if (!items.length) { const d = h('div', 'hint'); d.innerHTML = EMPTY; historyEl.appendChild(d); $('clear-hist').hidden = true; return; }
-  const pending = items.slice(0, -30), frag = document.createDocumentFragment();
-  for (const it of items.slice(-30)) frag.appendChild(entryEl(it));
+  const pending = items.slice(0, -16), frag = document.createDocumentFragment();
+  for (const it of items.slice(-16)) frag.appendChild(entryEl(it));        // more than a screenful, even on iPad
   historyEl.appendChild(frag);
   historyEl.scrollTop = historyEl.scrollHeight;
+  // older entries are built off the page in slices of ~25 ms (under the 50 ms of a long task) and inserted about every
+  // 150 ms: each insertion costs a layout of the whole list (to keep the scroll position), so few insertions keep it fast
+  let built = [], since = performance.now();
   const older = () => {
-    if (gen !== renderGen || !pending.length) return;
-    const f = document.createDocumentFragment();
-    for (const it of pending.splice(-30)) if (items.includes(it)) f.appendChild(entryEl(it));
-    const fromBottom = historyEl.scrollHeight - historyEl.scrollTop;
-    historyEl.prepend(f);
-    historyEl.scrollTop = historyEl.scrollHeight - fromBottom;
-    setTimeout(older, 0);
+    if (gen !== renderGen) return;
+    const t0 = performance.now();
+    while (pending.length && performance.now() - t0 < 25) { const it = pending.pop(); if (items.includes(it)) built.push(entryEl(it)); }
+    if (built.length && (!pending.length || performance.now() - since > 150)) {
+      const fromBottom = historyEl.scrollHeight - historyEl.scrollTop;
+      historyEl.prepend(...built.reverse());
+      historyEl.scrollTop = historyEl.scrollHeight - fromBottom;
+      built = []; since = performance.now();
+    }
+    if (pending.length) yieldThen(older);
   };
-  setTimeout(older, 0);
+  yieldThen(older);
 }
 function entryEl(it) {
   const d = h('div', 'entry'); d.dataset.id = it.id;
@@ -567,7 +577,7 @@ function renderProfile() {
   const p = Pr.get(), root = $('v-profile');
   if (!p) { root.replaceChildren(); return; }
   const L = Pr.levelOf(p.xp), a = Pr.levelStart(L), b = Pr.levelStart(L + 1);
-  const box = h('div', 'prof'), bar = h('div', 'fbar'), fill = h('div'); fill.style.width = `${100 * (p.xp - a) / (b - a)}%`; bar.appendChild(fill);
+  const box = h('div', 'prof'), bar = h('div', 'fbar'), fill = h('div'); fill.style.transform = `scaleX(${(p.xp - a) / (b - a)})`; bar.appendChild(fill);
   const who = h('div', 'pname'); who.append(document.createTextNode(p.name), h('span', 'ptag', ` #${p.tag}`));
   const inp = nameInput(p.name), err = h('div', 'mini perr');
   const saveName = () => { const e = Pr.rename(inp.value); err.textContent = e || ''; if (!e) { inp.blur(); toast('Name saved'); renderProfile(); } };

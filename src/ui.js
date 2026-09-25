@@ -33,9 +33,15 @@ export class Editor {
   render() {
     this.pre.data = this.text.slice(0, this.caret);
     this.post.data = this.text.slice(this.caret);
-    const el = this.el, c = this.cur;
-    c.style.animation = 'none'; void c.offsetWidth; c.style.animation = '';   // restart the short blink
-    const x = c.offsetLeft, w = el.clientWidth;                                // keep the caret in view
+    // restart the short blink: a new animation name restarts it without forcing a layout (blink and blink2 are identical)
+    this.cur.style.animationName = (this.blinkB = !this.blinkB) ? 'blink2' : 'blink';
+    // keep the caret in view: measured once per frame, in the frame's own layout, not right after every edit
+    if (!this.inView) { this.inView = true; requestAnimationFrame(() => { this.inView = false; this.scrollToCaret(); }); }
+  }
+  scrollToCaret() {
+    const el = this.el, w = el.clientWidth;
+    if (!w || (el.scrollLeft === 0 && el.scrollWidth <= w)) return;            // hidden, or everything fits
+    const x = this.cur.offsetLeft;
     if (x < el.scrollLeft + 8) el.scrollLeft = Math.max(0, x - 24);
     else if (x > el.scrollLeft + w - 16) el.scrollLeft = x - w + 32;
   }

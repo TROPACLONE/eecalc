@@ -5,11 +5,17 @@ import fs from 'fs';
 import crypto from 'crypto';
 fs.rmSync('dist', { recursive: true, force: true });
 fs.mkdirSync('dist');
-await build({ entryPoints: ['src/app.js'], bundle: true, splitting: true, minify: true, format: 'esm', target: ['safari18'],
-              outdir: 'dist', entryNames: '[name]', chunkNames: 'c-[hash]', legalComments: 'inline', logLevel: 'warning' });
+const { metafile } = await build({ entryPoints: ['src/app.js'], bundle: true, splitting: true, minify: true, format: 'esm', target: ['safari18'],
+              outdir: 'dist', entryNames: '[name]', chunkNames: 'c-[hash]', legalComments: 'inline', logLevel: 'warning', metafile: true });
+// the startup path: app.js and every chunk it imports statically (not the ones loaded on first use), found transitively
+const startup = [], visit = f => { if (startup.includes(f)) return; startup.push(f);
+  for (const i of metafile.outputs[f].imports) if (i.kind === 'import-statement') visit(i.path); };
+visit('dist/app.js');
 let html = fs.readFileSync('src/index.html', 'utf8');
 const css = html.match(/<style>([\s\S]*?)<\/style>/)[1];
 html = html.replace(css, (await transform(css, { loader: 'css', minify: true })).code.trim()).replace(/\n\s*/g, '\n');
+// modulepreload: the browser fetches the whole startup path in parallel instead of discovering it one level at a time
+html = html.replace('<link rel="manifest"', startup.map(f => `<link rel="modulepreload" href="${f.slice(5)}">`).join('\n') + '\n<link rel="manifest"');
 fs.writeFileSync('dist/index.html', html);
 for (const f of ['manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png']) fs.copyFileSync(`src/${f}`, `dist/${f}`);
 // station logos: served from logos/, not precached (the service worker caches each one the first time it is shown)
