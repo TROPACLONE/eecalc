@@ -84,10 +84,12 @@ export class Chat {
     const wasOnline = this.state === 'online';
     this.ws = null;
     if (!this.wanted) { this.setState('offline'); return; }
-    if (!wasOnline) this.broker++;                              // this broker failed: try the next one
+    if (!wasOnline) { this.broker++; this.fails = (this.fails || 0) + 1; }   // this broker failed: try the next one
     this.setState(navigator.onLine ? 'connecting' : 'offline');
     clearTimeout(this.timer);
-    if (navigator.onLine) this.timer = setTimeout(() => this.connect(), wasOnline ? 1500 : 800);
+    // brokers unreachable while "online" (captive portal, firewall): back off, 0.8 s doubling up to 30 s
+    const wait = wasOnline ? 1500 : Math.min(30000, 800 * 2 ** Math.max(0, (this.fails || 1) - 1));
+    if (navigator.onLine) this.timer = setTimeout(() => this.connect(), wait);
   }
   disconnect() {
     this.wanted = false;
@@ -117,6 +119,7 @@ export class Chat {
       if (body[1] !== 0) { this.ws.close(); return; }
       this.ws.send(SUBSCRIBE(1, TOPIC));
     } else if (type === 9) {                                      // SUBACK
+      this.fails = 0;
       this.setState('online', new URL(this.ws.url).hostname);
       this.lastPong = Date.now();
       clearInterval(this.pingT);

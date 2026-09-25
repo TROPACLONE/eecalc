@@ -9,7 +9,7 @@ A web app installed on the Home Screen: it opens full screen, works offline (exc
 - **Network:**
   - a case editor (tables, up to 50 buses);
   - power flow (Newton-Raphson, fast-decoupled, Gauss-Seidel, DC);
-  - short circuit (3φ, SLG, LL, LLG);
+  - short circuit (3φ, SLG, LL, LLG), with the ±30° shift of Δ-Y transformers (taken as clock 11: Dyn11, YNd11) in the phase voltages;
   - N-1 contingency.
 - **Focus:** a Pomodoro timer with XP and levels.
 - **Player:** 27 radio stations from 9 countries, 6 lofi streams and LibriVox audiobooks (search, chapters, resume where you stopped). It keeps playing outside Focus until paused or stopped.
@@ -35,11 +35,11 @@ A web app installed on the Home Screen: it opens full screen, works offline (exc
 ## Verification
 
 - **Calculator:** 7,922 of 7,924 reference expressions match the original Python engine. The other 2 have the same values but a verified-digit estimate of 23 instead of 22.
-- **Energy tools:** 1,513 of 1,513 cases match.
+- **Energy tools:** 1,504 of 1,513 cases match the original engine; the other 9 are deliberate corrections, each checked by the test: the rotor frequency is |s|·f, an optional input without its partner is reported instead of ignored, and negative R or X are rejected.
 - **Induction machine:** 2,002 of 2,002 cases match an independent mpmath implementation (worst difference 4,9·10⁻⁶⁰); Chapman's worked examples agree to 0,2 %.
 - **Power flow:** 1,956 of 1,956 values match PYPOWER/MATPOWER, on the 9-, 14- and 30-bus cases, a phase shifter and Q limits, using all four methods.
-- **Short circuit:** 792 of 792 values match an independent NumPy implementation.
-- **N-1:** all 24 IEEE 14 outages match PYPOWER.
+- **Short circuit:** 792 of 792 values match an independent NumPy implementation, which applies the Δ-Y phase shift the same way.
+- **N-1:** all 24 IEEE 14 outages match PYPOWER. The list keeps a summary of each outage; its full results are solved again when you open it.
 - **Interface:** two end-to-end suites of 29 checks each pass on emulated iPhone 13 and iPad screens.
 
 To re-run the tests, you need Node.js 20 or newer. The Python reference scripts additionally need PYPOWER.

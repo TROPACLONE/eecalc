@@ -38,7 +38,8 @@ export function tImTest(c) {
   if (!R2.gt(0)) throw new CalcError('R₁ is not smaller than R_lr = P_lr / (3·I_lr²): check R₁ and the locked-rotor test');
   if (!Xlr.gt(0)) throw new CalcError('The locked-rotor test gives no reactance (P = √3·V·I): check the data');
   const X1 = d.mul(k1, Xlr), X2 = d.mul(k2, Xlr);
-  // no-load test (rotor branch open): P_Fe = P0 − 3·I0²·R1 − P_fw, Q_m = Q0 − 3·I0²·X1
+  // no-load test (rotor branch open): P_Fe = P0 − 3·I0²·R1 − P_fw; Q_m = Q0 − 3·I0²·X1 (exact) or Q0 (approximate:
+  // the magnetising branch is at the terminals, so I0 does not flow through X1)
   const V0 = phV(c, c.x('V0', { positive: true })), I0 = phI(c, c.x('I0', { positive: true })), P0 = c.x('P0', { positive: true });
   const S0 = d.mul(3, d.mul(V0, I0));
   if (P0.gt(S0)) throw new CalcError('No-load P is larger than √3·V·I: check the no-load test');
@@ -46,8 +47,8 @@ export function tImTest(c) {
   const Pcu0 = d.mul(3, d.mul(I02, R1)), Pfw = c.has('Pfw') ? c.x('Pfw', { lo: 0 }) : n(0);
   const Pfe = diff(P0, d.add(Pcu0, Pfw));
   if (Pfe.isNeg()) throw new CalcError('No-load P is smaller than 3·I₀²·R₁ + P_fw: check the no-load test and P_fw');
-  const Qm = diff(Q0, d.mul(3, d.mul(I02, X1)));
-  if (!Qm.gt(0)) throw new CalcError('No-load Q is not larger than 3·I₀²·X₁: check the tests');
+  const Qm = exact ? diff(Q0, d.mul(3, d.mul(I02, X1))) : Q0;
+  if (!Qm.gt(0)) throw new CalcError(exact ? 'No-load Q is not larger than 3·I₀²·X₁: check the tests' : 'The no-load test gives no reactive power: check the data');
   // voltage across the magnetising branch: E1 = V0 − Z1·I0 (exact), V0 (approximate); I0 = (P0 − jQ0) / (3·V0)
   const E12 = exact ? abs2(I.sub(V0, mul(new Cx(R1, X1), new Cx(d.div(P0, d.mul(3, V0)), d.div(Q0, d.mul(3, V0)).neg()))))
                     : d.mul(V0, V0);
@@ -126,6 +127,11 @@ function imSolve(m, mode, target) {
     lo = s;
   }
   if (up === null || !isFinite(up)) {
+    if (mode === 'P') {                                // the limit on shaft power is P_max, not T_max
+      let Pmax = -Infinity;
+      for (let i = 0; i <= 2000; i++) { const s = i / 2000, T = k * s / ((a * s + b) * s + cc); Pmax = Math.max(Pmax, w * (1 - s) * T - fw); }
+      throw new CalcError(`No stable operating point: the shaft power is more than the machine can deliver (P_max ≈ ${E.fmtReal(n(Pmax), 4)} W)`);
+    }
     const Tmax = d.div(d.mul(3, m.Vth2), d.mul(d.mul(2, m.ws), d.add(m.Rth, m.rA)));
     throw new CalcError(`No stable operating point: the load is more than the machine can drive (T_max = ${E.fmtReal(Tmax, 6)} N·m)`);
   }

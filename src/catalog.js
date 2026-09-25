@@ -6,6 +6,7 @@
  CDN (e.g. NNNNN.live.streamtheworld.com): they rotate; use the provider's redirect endpoint instead.
  Last checked 2026-09-25: every stream answered with audio, and cors: true only where every hop of the redirect
  chain sends Access-Control-Allow-Origin (also for Origin: null, which browsers send after a cross-origin redirect).
+ HLS streams (.m3u8) play directly whatever cors says: WebKit can't route HLS through Web Audio.
 */
 export const COUNTRIES = [['PT', 'Portugal'], ['ES', 'Spain'], ['FR', 'France'], ['DE', 'Germany'], ['GB', 'United Kingdom'],
   ['IT', 'Italy'], ['US', 'United States'], ['BR', 'Brazil'], ['JP', 'Japan']];

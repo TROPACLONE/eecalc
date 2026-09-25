@@ -16,7 +16,8 @@ export function init(ctx, root) {
   let cell = null;                                  // cell being edited: {table, row, key, td, ed}
   const pf = { method: 'nr', qlim: true, start: 'flat', res: null, title: '', tab: 'summary', err: null, busy: false };
   const sc = { bus: null, type: '3ph', zf: '0', prefault: 'flat', res: null, err: null };
-  const n1 = { res: null, running: false, cancel: false, done: 0, total: 0, branches: true, gens: true };
+  const n1 = { res: null, running: false, cancel: false, done: 0, total: 0, branches: true, gens: true, run: 0, snapshot: null, qlim: false };
+  const dropN1 = () => { n1.res = null; n1.snapshot = null; if (n1.running) { n1.running = false; n1.run++; } };   // results no longer match the case
   let zfEd = null;
 
   const scroll = h('div', 'scroll nscroll'), bar = h('div', 'celledit');
@@ -114,7 +115,7 @@ export function init(ctx, root) {
     scroll.replaceChildren(top, btns, info, tabs, grid, add, hint);
     scroll.classList.add('casemode');
   }
-  function changed() { dirty = true; pf.res = null; sc.res = null; n1.res = null; renderCase(); }
+  function changed() { dirty = true; pf.res = null; sc.res = null; dropN1(); renderCase(); }
   function starter() {
     const c = NW.newCase('New case');
     c.buses.push(Object.assign(NW.blankRow('buses', c), { num: '1', type: 'Slack', kv: '20', pd: '0', qd: '0' }));
@@ -123,7 +124,7 @@ export function init(ctx, root) {
     c.branches.push(Object.assign(NW.blankRow('branches', c), { from: '1', to: '2', r: '0.01', x: '0.1', b: '0.02' }));
     return c;
   }
-  function setCase(c, fromFile) { commitCell(); kase = c; kase._fromFile = fromFile; dirty = !fromFile && c.name === 'New case'; pf.res = null; sc.res = null; n1.res = null; sc.bus = null; renderCase(); }
+  function setCase(c, fromFile) { commitCell(); kase = c; kase._fromFile = fromFile; dirty = !fromFile && c.name === 'New case'; pf.res = null; sc.res = null; dropN1(); sc.bus = null; renderCase(); }
   function discard(then) {
     if (!dirty) { then(); return; }
     sheet('This case has unsaved changes', [['Discard changes', then, 'danger'], ['Save first', () => saveCase().then(then)]]);
@@ -183,7 +184,7 @@ export function init(ctx, root) {
     }
     if (table === 'base') { if (text) kase.base = text; }
     else kase[table][row][key] = text;
-    dirty = true; pf.res = null; sc.res = null; n1.res = null;
+    dirty = true; pf.res = null; sc.res = null; dropN1();
     const next = moveDown && table !== 'base' && row + 1 < kase[table].length ? row + 1 : null;
     closeCell();
     renderCase();
@@ -305,7 +306,7 @@ export function init(ctx, root) {
   function sendToCalc(r) {
     const n = r.V.length, v = new E.Mat(n, 1, r.V.slice());
     eng.setVar('Vbus', v);
-    const c = compileCase();
+    const c = r.model ? { model: r.model } : compileCase();   // an N-1 result carries its own (outage) model
     if (c.model) {
       const Y = new E.Mat(n, n);
       E.internals.withDps(50, () => {
@@ -405,8 +406,10 @@ export function init(ctx, root) {
         { t: x.vmax ? `${num(x.vmax.vm)} (${x.vmax.n})` : '', cls: 'n' + (x.vmax && x.vmax.vio ? ' bad' : '') },
         { t: x.violations != null ? String(x.violations) : x.note || '', cls: 'n' }]), i => {
         const x = res[i];
-        if (!x.result) { toast(x.note || 'No results for this outage'); return; }
-        pf.res = x.result; pf.title = `${x.outage.label} out`; pf.tab = 'summary'; pf.err = null;
+        if (!x.solved) { toast(x.note || 'No results for this outage'); return; }
+        let full;                                            // re-solved on demand: the list keeps only summaries
+        try { full = NW.solveOutage(n1.snapshot, eng, x.outage, { qlim: n1.qlim }); } catch (ex) { toast(ex.msg || String(ex)); return; }
+        pf.res = full.result; pf.res.model = full.model; pf.title = `${x.outage.label} out`; pf.tab = 'summary'; pf.err = null;
         ctx.show('net', 'pf');
       }));
     }
@@ -420,12 +423,13 @@ export function init(ctx, root) {
     try { base = NW.powerFlow(c.model, { qlim: pf.qlim }); } catch (ex) { n1.err = h('div', 'issues', 'Base case: ' + (ex.msg || ex)); renderN1(); return; }
     void base;
     const list = NW.outages(c.model).filter(o => (o.kind === 'branch' ? n1.branches : n1.gens));
-    Object.assign(n1, { running: true, cancel: false, done: 0, total: list.length, res: [], err: null });
-    const snapshot = JSON.parse(JSON.stringify(kase));
+    const snapshot = JSON.parse(JSON.stringify(kase)), qlim = pf.qlim, res = [], run = ++n1.run;
+    Object.assign(n1, { running: true, cancel: false, done: 0, total: list.length, res, err: null, snapshot, qlim });
     renderN1();
     const step = () => {
+      if (run !== n1.run) return;                            // the case was edited (or a new run started): drop this one
       if (n1.cancel || n1.done >= list.length) { n1.running = false; if (n1.cancel) toast('Stopped'); if (current === 'n1') renderN1(); return; }
-      n1.res.push(NW.runOutage(snapshot, eng, list[n1.done], { qlim: pf.qlim }));
+      res.push(NW.runOutage(snapshot, eng, list[n1.done], { qlim }));
       n1.done++;
       if (current === 'n1') { const s = scroll.querySelector('.status'); if (s) s.textContent = `Analysing outage ${Math.min(n1.done + 1, n1.total)} of ${n1.total}…`; }
       setTimeout(step, 0);                                   // keep the interface responsive between outages

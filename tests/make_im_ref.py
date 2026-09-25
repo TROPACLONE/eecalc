@@ -161,7 +161,8 @@ def ref_imtest(t):
     if P0 > S0: return None
     S0c = mpc(P0, sqrt(S0 ** 2 - P0 ** 2))
     Pfe = P0 - 3 * I0 ** 2 * R1 - Pfw
-    Qm = S0c.imag - 3 * I0 ** 2 * X1
+    # approximate circuit: the magnetising branch is at the terminals, so I0 never flows through X1
+    Qm = S0c.imag - 3 * I0 ** 2 * X1 if t['model'] == 'exact' else S0c.imag
     if Pfe < 0 or Qm <= 0: return None
     I0c = (S0c / 3 / V0).conjugate()
     E2 = abs(V0 - mpc(R1, X1) * I0c) ** 2 if t['model'] == 'exact' else V0 ** 2

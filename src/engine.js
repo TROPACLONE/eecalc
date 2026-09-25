@@ -115,7 +115,7 @@ function conj(a) { return isC(a) ? new Cx(a.re, a.im.neg()) : a; }
 export function cabs(a) { return isC(a) ? D.hypot(a.re, a.im) : D.abs(a); }
 function carg(a) {
   if (!isC(a)) return a.isNeg() ? PI() : new D(0);
-  return memoized('arg' + (a.im.d ? a.im.d.join(',') + a.im.e + a.im.s : a.im.toString()) + ':', a.re, () => D.atan2(a.im, a.re));
+  return memoized('arg' + (a.im.d ? `${a.im.s}|${a.im.e}|${a.im.d.join(',')}` : a.im.toString()) + ':', a.re, () => D.atan2(a.im, a.re));
 }
 function finiteD(x) { return x.isFinite(); }
 /** |re| + |im|: within √2 of |z|, no square root — for pivoting and noise-scale estimates. */
@@ -187,7 +187,11 @@ function csinh(z) { return new Cx(D.mul(rsinh(z.re), D.cos(z.im)), D.mul(rcosh(z
 function ccosh(z) { return new Cx(D.mul(rcosh(z.re), D.cos(z.im)), D.mul(rsinh(z.re), D.sin(z.im))); }
 
 // inverse functions: principal branches, real inputs outside the real domain follow mpmath
+// asin, atan, asinh and atanh are z·(1 + O(z²)): for a tiny complex z the log formulas below cancel away every
+// digit (at 50 and 80 digits alike, so the check can't see it), while z itself is exact to the working precision
+const tinyC = z => isC(z) && abs2(z).lt(`1e-${D.dps + 4}`);
 function casin(z) {
+  if (tinyC(z)) return z;
   if (isR(z)) {
     if (D.abs(z).lte(1)) return D.asin(z);
     const h = D.acosh(D.abs(z)), hp = D.div(PI(), 2);
@@ -205,11 +209,12 @@ function cacos(z) {
   return sub(D.div(PI(), 2), casin(z));
 }
 function catan(z) {
+  if (tinyC(z)) return z;
   if (isR(z)) return D.atan(z);
   const iz = mul(I, z);
   return mul(new Cx(Z0, new D(0.5)), sub(clog(sub(ONE, iz)), clog(add(ONE, iz))));
 }
-function casinh(z) { return isR(z) ? D.asinh(z) : clog(add(z, csqrt(add(mul(z, z), ONE)))); }
+function casinh(z) { return isR(z) ? D.asinh(z) : tinyC(z) ? z : clog(add(z, csqrt(add(mul(z, z), ONE)))); }
 function cacosh(z) {
   if (isR(z)) {
     if (z.gte(1)) return D.acosh(z);
@@ -219,6 +224,7 @@ function cacosh(z) {
   return clog(add(z, mul(csqrt(add(z, ONE)), csqrt(sub(z, ONE)))));
 }
 function catanh(z) {
+  if (tinyC(z)) return z;
   if (isR(z)) {
     if (D.abs(z).lt(1)) return D.atanh(z);
     if (D.abs(z).eq(1)) return z.isNeg() ? new D(-Infinity) : new D(Infinity);
@@ -626,15 +632,19 @@ function matAddSub(a, b, op) {
 }
 function matMul(a, b) {                         // each entry cleaned against Σ|a_ik||b_kj|
   const out = new Mat(a.rows, b.cols);
+  // parts and |re|+|im| of every entry computed once, not once per product; zero terms (sparse Ybus-like matrices) skipped
+  const la = a.a.map(l1), lb = b.a.map(l1), ar = a.a.map(re), ai = a.a.map(im), br = b.a.map(re), bi = b.a.map(im);
+  const w = W();                                            // exact dot products, each rounded once
   for (let r = 0; r < a.rows; r++) {
     for (let c = 0; c < b.cols; c++) {
-      const w = W();                                        // exact dot product, rounded once
       let sr = new w(0), si = new w(0), ref = new D(0);
       for (let k = 0; k < a.cols; k++) {
-        const x = a.get(r, k), y = b.get(k, c), xr = re(x), xi = im(x), yr = re(y), yi = im(y);
+        const x = r * a.cols + k, y = k * b.cols + c;
+        if (la[x].isZero() || lb[y].isZero()) continue;
+        const xr = ar[x], xi = ai[x], yr = br[y], yi = bi[y];
         sr = w.add(sr, w.sub(w.mul(xr, yr), w.mul(xi, yi)));
         si = w.add(si, w.add(w.mul(xr, yi), w.mul(xi, yr)));
-        ref = D.add(ref, D.mul(l1(x), l1(y)));
+        ref = D.add(ref, D.mul(la[x], lb[y]));
       }
       const s = si.isZero() ? rnd(sr) : new Cx(rnd(sr), rnd(si));
       out.set(r, c, chopRef(s, ref));
@@ -758,6 +768,7 @@ function trig(kind) {
       if (c.isZero()) throw new CalcError('tan is undefined here (cos = 0)', pos, true);
       return D.div(s, c);
     }
+    // a complex argument is always in radians, whatever the angle unit (as in the reference engine)
     checkGrowth(im(x), pos);
     if (D.abs(x.re).gt(D.MAX_HT)) throw new CalcError('Angle is too large to resolve, even at 500 digits', pos, false, true);
     if (kind === 'sin') return csin(x);
@@ -778,7 +789,9 @@ const hyp = {
   sinh: x => (isR(x) ? rsinh(x) : csinh(x)), cosh: x => (isR(x) ? rcosh(x) : ccosh(x)),
   tanh: x => (isR(x) ? rtanh(x) : div(csinh(x), ccosh(x))), asinh: casinh, acosh: cacosh, atanh: catanh,
 };
-for (const [k, f] of Object.entries(hyp)) fn(k, (E, a, pos) => f(checkGrowth(norm(scalar(a[0], pos)), pos)));
+// only sinh, cosh and complex tanh grow like e^|x|; asinh, acosh, atanh and real tanh don't
+const grows = (k, x) => k === 'sinh' || k === 'cosh' || (k === 'tanh' && isC(x));
+for (const [k, f] of Object.entries(hyp)) fn(k, (E, a, pos) => { const x = norm(scalar(a[0], pos)); return f(grows(k, x) ? checkGrowth(x, pos) : x); });
 
 export function roundHalfUp(x, n) {
   if (x.isZero()) return x;
@@ -1177,18 +1190,22 @@ export class Engine {
         square(a, pos);
         if (Math.abs(p) > 1e6) throw new CalcError('Matrix exponent is too large', pos);
         if (p < 0) { a = matInv(a, pos); p = -p; }
-        let res = eye(a.rows), base = a;
-        while (p > 0) { if (p & 1) res = matMul(res, base); p = Math.floor(p / 2); if (p) base = matMul(base, base); }
+        let res = p === 0 ? eye(a.rows) : null, base = a;             // no identity product to start from
+        while (p > 0) { if (p & 1) res = res ? matMul(res, base) : base; p = Math.floor(p / 2); if (p) base = matMul(base, base); }
         return denoiseRelMax(res);
       }
       a = norm(a); b = norm(b);
       if (isZero(a)) {
         if (!isZero(b) && re(b).isNeg()) throw new CalcError('Division by zero', pos, true);
+        if (!isZero(b) && re(b).isZero()) throw new CalcError('0 to an imaginary power is undefined', pos);
         return isZero(b) ? new D(1) : new D(0);
       }
       const la = D.abs(D.ln(cabs(a)));
       if (!cabs(a).eq(1) && !isZero(b) && mag2(cabs(b)) + mag2(la) > MAX_MAG_BITS + 1)
         throw new CalcError('Result is too large to represent', pos);
+      // |a| = 1: the magnitude is e^(−im(b)·arg(a)), e.g. (−1)^(1e20j) = e^(−π·1e20), which is not representable
+      if (cabs(a).eq(1) && isC(b) && mag2(D.abs(D.mul(im(b), carg(a)))) > MAX_MAG_BITS + 1)
+        throw new CalcError('Result is too large or too small to represent', pos);
       if (isC(a) || isC(b) || a.isNeg()) {
         const rot = D.add(D.mul(re(b), carg(a)), D.mul(im(b), D.ln(cabs(a))));
         checkAngle(D.div(rot, PI()), pos);

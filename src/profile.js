@@ -34,9 +34,12 @@ const int = (v, [lo, hi], d) => (Number.isInteger(v) && v >= lo && v <= hi ? v :
 function sanitize(o) {                          // never trust what is on disk
   if (!o || typeof o !== 'object' || checkName(String(o.name || '')) || !/^[0-9a-f]{4}$/.test(o.tag)) return null;
   const s = o.pomo || {};
+  const mins = o.run ? int(o.run.mins, [1, 90], 25) : 25, span = mins * 60000;
   const run = o.run && ['focus', 'short', 'long'].includes(o.run.ph) ? {
-    ph: o.run.ph, mins: int(o.run.mins, [1, 90], 25),
-    end: Number.isFinite(o.run.end) ? o.run.end : null, left: Number.isFinite(o.run.left) ? o.run.left : null,
+    ph: o.run.ph, mins,
+    // a phase can't end later than its length from now (a clock moved back, or a damaged profile)
+    end: Number.isFinite(o.run.end) ? Math.min(o.run.end, Date.now() + span) : null,
+    left: Number.isFinite(o.run.left) ? Math.max(0, Math.min(o.run.left, span)) : null,
     pending: !!o.run.pending } : null;
   return { v: 1, name: o.name.trim(), tag: o.tag, xp: int(o.xp, [0, 1e9], 0),
     pomo: Object.fromEntries(Object.keys(DEFAULTS).map(k => [k, int(s[k], LIMITS[k], DEFAULTS[k])])),
@@ -127,9 +130,10 @@ function pomoTimer() {
   clearInterval(tick); clearTimeout(endTimer); tick = endTimer = 0;
   const r = P && P.run;
   if (!r || r.pending || r.end == null) return;
+  if (r.end > Date.now() + r.mins * 60000) r.end = Date.now() + r.mins * 60000;   // the clock was moved back
   // one-shot at the phase end: also fires in the background whenever iOS runs JS (e.g. while the radio plays),
   // so the radio stops on time; the 1-Hz display tick runs only while the app is visible
-  endTimer = setTimeout(() => { check(); pomoTimer(); }, Math.max(0, r.end - Date.now()) + 50);
+  endTimer = setTimeout(() => { check(); pomoTimer(); }, Math.min(2 ** 31 - 1, Math.max(0, r.end - Date.now()) + 50));
   if (document.visibilityState === 'visible') tick = setInterval(() => { check(); emit('tick'); }, 1000);
 }
 onChange(w => { if (w === 'run' || w === 'reset' || (w && w.done)) pomoTimer(); });

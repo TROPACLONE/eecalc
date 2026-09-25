@@ -45,6 +45,8 @@ export class Incomplete extends Error {
 class Inputs {
   constructor(vals, labels) { this.vals = vals; this.labels = labels; }
   has(k) { return this.vals[k] != null; }
+  /** An optional input that only means something with another one: say so instead of ignoring it. */
+  pair(k, other) { if (this.has(k) && !this.has(other)) throw new CalcError(`${this.labels[k]} also needs ${this.labels[other]}`); }
   choice(k) { return this.vals[k]; }
   list(k, opts) {
     const v = this.vals[k] || [];
@@ -139,7 +141,7 @@ function tD2y(c) {
   return [new Out('Za', 'Za', za, 'Ω'), new Out('Zb', 'Zb', zb, 'Ω'), new Out('Zc', 'Zc', zc, 'Ω')];
 }
 function tVdrop(c) {
-  const d = D(), R = c.x('R'), X = c.x('X'), P = c.x('P'), Q = c.has('Q') ? c.x('Q') : n(0), V = c.x('V', { positive: true });
+  const d = D(), R = c.x('R', { lo: 0 }), X = c.x('X', { lo: 0 }), P = c.x('P'), Q = c.has('Q') ? c.x('Q') : n(0), V = c.x('V', { positive: true });
   const Ic = conj(div(new Cx(P, Q), mul(sq3(), V)));
   const vs = add(d.div(V, sq3()), mul(new Cx(R, X), Ic));
   const Vs = d.mul(sq3(), cabs(vs)), dV = diff(Vs, V), I2 = d.mul(cabs(Ic), cabs(Ic));
@@ -150,7 +152,7 @@ function tVdrop(c) {
 }
 function tLine(c) {
   const d = D(), z = c.z('z'), y = c.z('y'), len = c.x('l', { positive: true });
-  nzv(y, 'y'); nzv(z, 'z');
+  nzv(y, 'y'); nzv(z, 'z'); c.pair('SR', 'VR');
   const zc = csqrt(E.norm(div(z, y))), g = csqrt(E.norm(mul(z, y)));
   const gl = E.checkGrowth(E.norm(mul(g, len)), null);
   const A = hcosh(gl), sh = hsinh(gl), B = mul(zc, sh), C = div(sh, zc);
@@ -181,6 +183,7 @@ function tTrafo(c) {
   const out = [new Out('zk', 'zk', uk, 'pu', 'plain'), new Out('rk', 'rk', rk, 'pu', 'plain'), new Out('xk', 'xk', xk, 'pu', 'plain'),
     new Out('Zk', 'Zk', mul(new Cx(rk, xk), Zb), 'Ω', 'eng', 'per phase, star'),
     new Out('Rk', 'Rk', d.mul(rk, Zb), 'Ω'), new Out('Xk', 'Xk', d.mul(xk, Zb), 'Ω')];
+  c.pair('i0', 'P0'); c.pair('P0', 'i0');
   if (c.has('i0') && c.has('P0')) {
     const y0 = d.div(c.x('i0', { positive: true, hi: 100 }), 100), g0 = d.div(c.x('P0', { lo: 0 }), Sn);
     if (g0.gt(y0)) throw new CalcError('P0 / Sn is larger than i0: check the test data');
@@ -208,7 +211,7 @@ function tIm(c) {
   const out = [new Out('ns', 'n_s', ns, 'rpm', 'plain'), new Out('ws', 'ω_s', d.div(d.mul(d.mul(2, PI()), ns), 60), 'rad/s', 'plain')];
   if (c.has('n')) {
     const s = d.div(diff(ns, c.x('n')), ns);
-    out.push(new Out('s', 's', s, '', 'plain', 'slip'), new Out('spct', 's', d.mul(100, s), '%', 'plain'), new Out('fr', 'f rotor', d.mul(s, f), 'Hz', 'plain'));
+    out.push(new Out('s', 's', s, '', 'plain', 'slip'), new Out('spct', 's', d.mul(100, s), '%', 'plain'), new Out('fr', 'f rotor', d.mul(d.abs(s), f), 'Hz', 'plain', s.isNeg() ? '|s|·f (s < 0: generating)' : ''));
   }
   return out;
 }
@@ -218,7 +221,7 @@ function tIm(c) {
 const machines = () => import('./machines.js');
 const IM_CONN = [['Y', 'Star (Y)'], ['D', 'Delta (Δ)']];
 const IM_MODEL = [['exact', 'Exact T'], ['approx', 'Approximate']];
-const IM_CLASS = [['AD', 'A, D, wound'], ['B', 'B'], ['C', 'C']];
+const IM_CLASS = [['AD', 'A, D, wound (IEC N)'], ['B', 'B (IEC N)'], ['C', 'C (IEC H)']];
 const F = (...a) => new Field(...a);
 export const TOOLS = [
   { id: 'power3', group: 'Power', title: 'Three-phase power', desc: "S = √3·V·I* from line-to-line voltage and line current. The current's angle is measured from the phase voltage.",
@@ -246,7 +249,7 @@ export const TOOLS = [
   { id: 'im', group: 'Machines', title: 'Induction machine speed', desc: 'Synchronous speed n_s = 120·f / poles, and slip for a given rotor speed.',
     fields: [F('f', 'f', 'Hz', false, '50'), F('poles', 'Number of poles (2p)'), F('n', 'Rotor speed', 'rpm', true)], fn: tIm },
   { id: 'imtest', group: 'Machines', title: 'Induction machine: parameters from tests',
-    desc: 'Per-phase equivalent circuit from the DC (R₁), no-load and locked-rotor tests. Locked rotor: R₂′ = P/(3I²) − R₁, X₁ + X₂′ = √(Z² − R²)·f/f_lr, split by IEEE 112 design class. No load: P_Fe = P₀ − 3I₀²R₁ − P_fw, Q_m = Q₀ − 3I₀²X₁, R_Fe = 3E²/P_Fe, X_m = 3E²/Q_m with E = |V − Z₁I₀| (exact) or V (approximate). Line values in; per-phase values out.',
+    desc: 'Per-phase equivalent circuit from the DC (R₁), no-load and locked-rotor tests. Locked rotor: R₂′ = P/(3I²) − R₁, X₁ + X₂′ = √(Z² − R²)·f/f_lr, split by IEEE 112 design class. No load: P_Fe = P₀ − 3I₀²R₁ − P_fw; R_Fe = 3E²/P_Fe, X_m = 3E²/Q_m with E = |V − Z₁I₀| and Q_m = Q₀ − 3I₀²X₁ (exact), or E = V and Q_m = Q₀ (approximate). Line values in; per-phase values out.',
     fields: [new Choice('conn', 'Connection', IM_CONN), new Choice('model', 'Circuit', IM_MODEL), new Choice('cls', 'Design class', IM_CLASS),
       F('f', 'Rated f', 'Hz', false, '50'), F('R1', 'R₁ per phase (DC)', 'Ω'), F('kR', 'R₁ correction factor', '', true),
       F('V0', 'No load: V (line-to-line)', 'V'), F('I0', 'No load: I (line)', 'A'), F('P0', 'No load: P', 'W'), F('Pfw', 'Friction and windage P_fw', 'W', true),

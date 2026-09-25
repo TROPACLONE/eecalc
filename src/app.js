@@ -4,9 +4,9 @@
 
  Privacy: the calculator stores nothing (no cookies, localStorage, IndexedDB). History, variables and
  network cases live in memory and vanish when the app is closed; a case is kept only if you save it
- to a file yourself. The service worker caches only the app's own files for offline use. The chat
- (while it is open) and the player (while something plays or a list is loaded) are the only features that
- use the network.
+ to a file yourself. The service worker caches only the app's own files for offline use. The chat (once
+ opened, while the app is visible, to count unread messages) and the player (while something plays or a
+ list is loaded) are the only features that use the network.
 */
 import * as E from './engine.js';
 import * as N from './energy.js';
@@ -92,6 +92,7 @@ function commit(t) {
   }
   historyEl.scrollTop = historyEl.scrollHeight;
   $('clear-hist').hidden = false;
+  $('said').textContent = `${it.name ? it.name + ' = ' : ''}${E.isM(it.value) ? `${it.value.rows} by ${it.value.cols} matrix` : fmt(it.value, it.reliable)[0][0]}`;
   pushInput(t);
   main.clear();
   preview.textContent = '';
@@ -368,6 +369,18 @@ function openMenu() {
 $('menu-btn').addEventListener('click', openMenu);
 $('to-calc').addEventListener('click', () => show('calc'));
 
+/** Imports a screen's module, showing "Loading…"; if it can't be fetched (offline, or the app was just updated and
+ *  the old file is gone) the screen says so and offers a reload. -> the module, or null. */
+async function lazy(id, imp) {
+  $(id).replaceChildren(h('div', 'hint pad16', 'Loading…'));
+  try { return await imp(); } catch {
+    const box = h('div', 'hint pad16', navigator.onLine ? 'This screen could not be loaded: the app has just been updated.' : 'This screen needs an internet connection the first time it is opened.');
+    const b = h('button', 'btn accent', 'Reload'); b.addEventListener('click', () => location.reload());
+    if (navigator.onLine) box.append(document.createElement('br'), b);
+    $(id).replaceChildren(box);
+    return null;
+  }
+}
 async function show(view, sub = null) {
   if (view === 'chat' && !navigator.onLine) { toast('The chat needs an internet connection'); return; }
   st.view = view; st.sub = sub;
@@ -379,17 +392,23 @@ async function show(view, sub = null) {
   }
   if (view === 'vars') renderVars();
   if (view === 'help') renderHelp(sub);
+  // a screen loaded on first use: after the await the user may already be elsewhere, so each step re-checks
+  const moved = () => st.view !== view || st.sub !== sub;
   if (view === 'net') {
-    if (!netMod) { $('v-net').replaceChildren(h('div', 'hint pad16', 'Loading…')); netMod = (await import('./netui.js')).init(ctx, $('v-net')); }
+    if (!netMod) { const m = await lazy('v-net', () => import('./netui.js')); if (!m) return; if (!netMod) netMod = m.init(ctx, $('v-net')); if (moved()) return; }
     netMod.show(sub || 'case');
   } else if (netMod) netMod.hide();
   if (view === 'focus') {
-    if (!focusMod) { $('v-focus').replaceChildren(h('div', 'hint pad16', 'Loading…')); focusMod = (await import('./focusui.js')).init(ctx, $('v-focus')); await loadMedia(); }
+    if (!focusMod) {
+      const m = await lazy('v-focus', () => import('./focusui.js')); if (!m) return;
+      if (!focusMod) focusMod = m.init(ctx, $('v-focus'));
+      await loadMedia(); if (moved()) return;
+    }
     focusMod.show();
   } else if (focusMod) focusMod.hide();
   if (view === 'profile') renderProfile();
   if (view === 'chat') {
-    if (!chatMod) chatMod = (await import('./chatui.js')).init(ctx, $('v-chat'));
+    if (!chatMod) { const m = await lazy('v-chat', () => import('./chatui.js')); if (!m) return; if (!chatMod) chatMod = m.init(ctx, $('v-chat')); if (moved()) return; }
     chatMod.show();
     $('dot').hidden = true;
   } else if (chatMod) chatMod.hide();
@@ -612,7 +631,13 @@ function chime() {                                   // two soft sine tones; sil
   try {
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
     const c = (mediaMod && mediaMod.player.ctx) || chimeCtx || (chimeCtx = new AC());
-    if (c.state !== 'running') return;
+    // the player suspends its context when nothing plays: wake it (allowed once it has been unlocked by a tap)
+    if (c.state !== 'running') { c.resume().then(() => { if (c.state === 'running') { tones(c); if (mediaMod && c === mediaMod.player.ctx) mediaMod.player.idle(); } }, () => {}); return; }
+    tones(c);
+  } catch { /* no audio: the toast is enough */ }
+}
+function tones(c) {
+  try {
     [[660, 0], [880, 0.18]].forEach(([f, t]) => {
       const o = c.createOscillator(), g = c.createGain(), t0 = c.currentTime + t;
       o.frequency.value = f; g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.02);
@@ -623,10 +648,15 @@ function chime() {                                   // two soft sine tones; sil
 function updatePomo() {
   const left = Pr.remaining(), b = $('pomo'), r = Pr.get() && Pr.get().run;
   b.hidden = left == null && !(r && r.pending);
-  if (!b.hidden) { b.textContent = left != null ? Pr.fmtTime(left) + (r.left != null ? ' ❚❚' : '') : 'Next'; b.classList.toggle('brk', !!r && r.ph !== 'focus'); }
+  if (!b.hidden) {
+    const t = left != null ? Pr.fmtTime(left) + (r.left != null ? ' ❚❚' : '') : 'Next';
+    if (b.textContent !== t) b.textContent = t;
+    b.classList.toggle('brk', !!r && r.ph !== 'focus');
+    b.setAttribute('aria-label', left != null ? `Focus timer: ${Pr.fmtTime(left)}${r.left != null ? ', paused' : ''}` : 'Focus timer: start the next phase');
+  }
 }
 Pr.onChange(w => {
-  if (w === 'tick' || w === 'run' || (w && w.done)) updatePomo();
+  if (w === 'tick' || w === 'run' || w === 'reset' || w === 'profile' || (w && w.done)) updatePomo();
   if (w && w.done) {
     const was = w.done === 'focus' ? 'Focus session complete' : 'Break over';
     if (document.visibilityState === 'visible') chime();

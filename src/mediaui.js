@@ -13,7 +13,12 @@ const fmt = s => { s = Math.max(0, Math.floor(s || 0)); const m = Math.floor(s /
 const mono = name => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
 const ibtn = (cls, ic, label, fn) => { const b = h('button', cls); b.appendChild(icon(ic)); b.setAttribute('aria-label', label); b.addEventListener('click', fn); return b; };
 /** Keeps fn subscribed to the player while el is in the page. */
-function live(el, fn) { const off = player.on(p => { if (el.isConnected) fn(p); else off(); }); }
+const lives = new Set();
+function live(el, fn) {
+  for (const x of lives) if (!x.el.isConnected) { x.off(); lives.delete(x); }   // e.g. the bar of a closed sheet
+  const x = { el, off: player.on(p => { if (el.isConnected) fn(p); else { x.off(); lives.delete(x); } }) };
+  lives.add(x);
+}
 
 // items: built once, so next / previous can step through the list an item was chosen from
 const ITEMS = {
@@ -90,7 +95,7 @@ export function bar() {
     prog.hidden = !book;
     vrow.querySelector('.pb-b').disabled = !on;
     vol.value = player.vol; vtxt.textContent = `${player.vol} %`;
-    vol.disabled = on && s === 'direct';
+    vol.disabled = on && !!player.el && !player.gainOK;          // a direct element ignores it on iOS
     el.classList.toggle('on', on); el.classList.toggle('playing', playing);
     clearInterval(timer); timer = 0;
     if (book) { tick(); if (playing) timer = setInterval(() => { if (!el.isConnected) { clearInterval(timer); return; } if (document.visibilityState === 'visible') tick(); }, 1000); }
@@ -168,8 +173,9 @@ export function browser(root) {
       S.q = inp.value.trim(); if (!S.q) { S.results = null; render(); return; }
       if (!navigator.onLine) { toast('Search needs an internet connection'); return; }
       S.busy = true; render();
-      searchBooks(S.q).then(r => { S.results = r; }, () => { S.results = []; toast("LibriVox can't be reached right now"); })
-        .finally(() => { S.busy = false; if (root.isConnected) render(); });
+      const q = S.q;                                          // a slower earlier search must not replace a newer one
+      searchBooks(q).then(r => { if (q === S.q) S.results = r; }, () => { if (q !== S.q) return; S.results = []; toast("LibriVox can't be reached right now"); })
+        .finally(() => { if (q !== S.q) return; S.busy = false; if (root.isConnected) render(); });
     });
     body.appendChild(form);
     const list = (head, items) => {

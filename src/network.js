@@ -416,7 +416,11 @@ function solveFloatPF(model, type, qfix, opts) {
   type.forEach((t, k) => { if (t === 'PV') pv.push(k); else if (t === 'PQ') pq.push(k); });
   const pvpq = [...pv, ...pq].sort((a, b) => a - b);
   const pvpqOrd = [...pvpq], pqOrd = pq.slice().sort((a, b) => a - b);
-  const tol = opts.tol ?? 1e-10, log = [];
+  // 1e-10 pu, but not below the double-precision noise floor of the mismatch (≈ eps·max|Y_kk|), which a very
+  // low-impedance branch (a bus tie) raises; the high-precision refinement closes the rest of the gap anyway
+  let yMax = 0;
+  for (let k = 0; k < n; k++) yMax = Math.max(yMax, Math.hypot(Y.G[k * n + k], Y.B[k * n + k]));
+  const tol = opts.tol ?? Math.max(1e-10, 1e3 * Number.EPSILON * yMax), log = [];
   const snap = (it, s) => {
     const e = { it, dP: maxAbs(s.mr, pvpqOrd), dQ: maxAbs(s.mi, pqOrd) };
     if (n <= 20) e.V = Array.from(Vm), e.Va = Array.from(Va, a => a * 180 / Math.PI);
@@ -496,15 +500,6 @@ function solveFloatPF(model, type, qfix, opts) {
   return { Vm, Va, converged: err <= tol, iterations: it, log, pvpq: pvpqOrd, pq: pqOrd, pv, s, Y, P, Q };
 }
 
-/** Q of each in-service generator from a bus's total, distributed like MATPOWER (by Q range). */
-function distributeQ(gensHere, Qtot, qlim) {
-  if (gensHere.length === 1) return [Qtot];
-  const qmin = gensHere.map(g => qlim(g).min), qmax = gensHere.map(g => qlim(g).max);
-  const smin = qmin.reduce((a, b) => a + b, 0), smax = qmax.reduce((a, b) => a + b, 0);
-  if (!Number.isFinite(smin) || !Number.isFinite(smax) || smax === smin) return gensHere.map(() => Qtot / gensHere.length);
-  return gensHere.map((g, i) => qmin[i] + (Qtot - smin) / (smax - smin) * (qmax[i] - qmin[i]));
-}
-
 /** Double-precision power flow with MATPOWER-style Q-limit enforcement. */
 export function floatPowerFlow(model, opts = {}) {
   if (model.island.length) throw new CalcError(`Buses ${model.island.join(', ')} are not connected to the slack bus`);
@@ -517,9 +512,11 @@ export function floatPowerFlow(model, opts = {}) {
     const viol = [];
     sol.pv.forEach(k => {
       const gens = model.genAt[k], Qtot = (sol.s.Vi[k] * sol.s.Ir[k] - sol.s.Vr[k] * sol.s.Ii[k]) * base + model.f(model.buses[k].qd);
-      const q = distributeQ(gens, Qtot, qlim);
-      const hi = gens.some((g, i) => q[i] > qlim(g).max + 1e-6), lo = gens.some((g, i) => q[i] < qlim(g).min - 1e-6);
-      if (hi || lo) viol.push([k, hi ? 'max' : 'min', gens.reduce((a, g) => a + (hi ? qlim(g).max : qlim(g).min), 0)]);
+      // the bus total against the sum of its generators' limits: with Q shared in proportion to the ranges this is
+      // the per-generator check, and a bus with an unlimited generator (blank Qmax / Qmin) never switches
+      const smax = gens.reduce((a, g) => a + qlim(g).max, 0), smin = gens.reduce((a, g) => a + qlim(g).min, 0);
+      const hi = Qtot > smax + 1e-6, lo = Qtot < smin - 1e-6;
+      if (hi || lo) viol.push([k, hi ? 'max' : 'min', hi ? smax : smin]);
     });
     if (!viol.length || ++rounds > 10) break;
     for (const [k, dir, qg] of viol) {
@@ -601,12 +598,18 @@ function refineDec(model, fsol, qfixExact) {
   for (let it = 0; ; it++) {
     if (it === 60) throw new CalcError('The refinement did not converge', null, true);
     let big = d(0);
+    const cur = new Map();                                       // I_k = Σ y_kj·v_j, once per bus per step (P and Q share it)
     const mis = (k, wantQ) => {                                  // exact P or Q mismatch at bus k
-      let ir = d(0), ii = d(0);
-      for (const [j, yr, yi] of rows[k]) {
-        ir = D.add(ir, D.sub(D.mul(yr, vr[j]), D.mul(yi, vi[j])));
-        ii = D.add(ii, D.add(D.mul(yr, vi[j]), D.mul(yi, vr[j])));
+      let c = cur.get(k);
+      if (!c) {
+        let ir = d(0), ii = d(0);
+        for (const [j, yr, yi] of rows[k]) {
+          ir = D.add(ir, D.sub(D.mul(yr, vr[j]), D.mul(yi, vi[j])));
+          ii = D.add(ii, D.add(D.mul(yr, vi[j]), D.mul(yi, vr[j])));
+        }
+        cur.set(k, c = [ir, ii]);
       }
+      const [ir, ii] = c;
       return wantQ ? D.sub(D.sub(D.mul(vi[k], ir), D.mul(vr[k], ii)), Q[k]) : D.sub(D.add(D.mul(vr[k], ir), D.mul(vi[k], ii)), P[k]);
     };
     pvpq.forEach((k, c) => { const x = mis(k, false); F[c] = x.toNumber(); big = D.max(big, D.abs(x)); });
@@ -648,8 +651,18 @@ function distributeQDec(gens, Qtot, vals) {
     const qmin = gens.map(g => vals.get(g.qmin)), qmax = gens.map(g => vals.get(g.qmax));
     const smin = qmin.reduce((a, b) => D.add(a, b), d(0)), smax = qmax.reduce((a, b) => D.add(a, b), d(0));
     if (!smax.eq(smin)) return gens.map((g, i) => D.add(qmin[i], D.mul(D.div(D.sub(Qtot, smin), D.sub(smax, smin)), D.sub(qmax[i], qmin[i]))));
+    return gens.map(() => D.div(Qtot, gens.length));
   }
-  return gens.map(() => D.div(Qtot, gens.length));
+  // some limit is blank: equal shares, but a generator whose share would break its own limit is held at that limit
+  // and the rest is shared by the others (the unlimited ones always stay free)
+  const q = new Array(gens.length).fill(null);
+  let rest = Qtot;
+  for (;;) {
+    const free = gens.map((g, i) => i).filter(i => q[i] === null), share = D.div(rest, free.length);
+    const held = free.filter(i => (gens[i].qmax && share.gt(vals.get(gens[i].qmax))) || (gens[i].qmin && share.lt(vals.get(gens[i].qmin))));
+    if (!held.length || held.length === free.length) { for (const i of free) q[i] = share; return q; }
+    for (const i of held) { q[i] = gens[i].qmax && share.gt(vals.get(gens[i].qmax)) ? vals.get(gens[i].qmax) : vals.get(gens[i].qmin); rest = D.sub(rest, q[i]); }
+  }
 }
 /** Everything reported for a solved case, from the exact state. */
 function results(model, fsol, ref) {
@@ -897,6 +910,38 @@ function zbusColumn(rows, n, k) {
   return col;
 }
 
+const DELTA_WYE = new Set(['YNd', 'Dyn', 'Yd', 'Dy']);
+/** Phase shift of each bus's zone (degrees, positive sequence) relative to the faulted bus k, whose phase labels the
+ *  fault conditions use. A Δ-Y transformer is taken as clock 11 (Dyn11, YNd11: the to side leads by 30°), unless the
+ *  branch has its own shift (MATPOWER sign: a positive shift makes the to side lag); with a power-flow prefault that
+ *  shift is already in the network, so it adds nothing here. -> array of Decimal or null (no shift). */
+function zoneShifts(model, vals, k, pfMode) {
+  const n = model.buses.length, adj = Array.from({ length: n }, () => []);
+  for (const br of model.branches) {
+    if (!br.on) continue;
+    const sh = br.shift ? vals.get(br.shift) : d(0);
+    const lead = !sh.isZero() ? (pfMode ? d(0) : sh.neg()) : DELTA_WYE.has(br.conn) ? d(30) : d(0);
+    if (lead.isZero()) continue;
+    const a = model.idx.get(br.f), b = model.idx.get(br.t);
+    adj[a].push([b, lead]); adj[b].push([a, lead.neg()]);
+  }
+  const rot = new Array(n).fill(null), seen = new Array(n).fill(false), st = [k];
+  seen[k] = true;
+  // zones are joined by every in-service branch; only the shifting ones change the angle
+  const all = Array.from({ length: n }, () => []);
+  for (const br of model.branches) { if (!br.on) continue; const a = model.idx.get(br.f), b = model.idx.get(br.t); all[a].push(b); all[b].push(a); }
+  while (st.length) {
+    const i = st.pop(), base = rot[i] || d(0);
+    for (const j of all[i]) {
+      if (seen[j]) continue;
+      const e = adj[i].find(([m]) => m === j);
+      const r = e ? base.add(e[1]) : base;
+      rot[j] = r.isZero() ? null : r; seen[j] = true; st.push(j);
+    }
+  }
+  return rot;
+}
+
 export function shortCircuit(model, opts) {
   const k = model.idx.get(opts.bus);
   if (k === undefined) throw new CalcError(`Bus ${opts.bus} is not in service`);
@@ -937,8 +982,12 @@ export function shortCircuit(model, opts) {
     const Iabc = abc(I0, I1, I2);
     const base = vals.get(model.base), kv = model.buses[k].kv ? vals.get(model.buses[k].kv) : null;
     const Ibase = kv && !kv.isZero() ? D.div(base, D.mul(D.sqrt(3), kv)) : null;   // kA
+    const rot = zoneShifts(model, vals, k, opts.prefault === 'pf');
     const bus = model.buses.map((b, i) => {
-      const V1 = E.norm(E.diff(Vpre[i], mul(z1[i], I1))), V2 = mul(mul(z2[i], I2), d(-1)), V0 = z0 ? mul(mul(z0[i], I0), d(-1)) : d(0);
+      let V1 = E.norm(E.diff(Vpre[i], mul(z1[i], I1))), V2 = mul(mul(z2[i], I2), d(-1));
+      const V0 = z0 ? mul(mul(z0[i], I0), d(-1)) : d(0);
+      // across Δ-Y transformers positive-sequence quantities turn by +θ and negative-sequence ones by −θ
+      if (rot[i]) { V1 = E.norm(mul(V1, I.cisHt(D.div(rot[i], 180)))); V2 = E.norm(mul(V2, I.cisHt(D.div(rot[i].neg(), 180)))); }
       const [Va, Vb, Vc] = abc(V0, V1, V2);
       return { n: b.n, va: Va, vb: Vb, vc: Vc, vam: cabs(Va), vbm: cabs(Vb), vcm: cabs(Vc) };
     });
@@ -959,19 +1008,35 @@ export function outages(model) {
   return list;
 }
 /** One contingency: the case with one element out, solved and verified; summarised for ranking. */
-export function runOutage(caseData, engine, outage, opts) {
+function outageCase(caseData, outage) {
   const c = JSON.parse(JSON.stringify(caseData));
   if (outage.kind === 'branch') c.branches[outage.row].on = '0'; else c.gens[outage.row].on = '0';
+  return c;
+}
+/** One outage, solved and verified. Only a summary is kept (a full result is ~160 KB on case30): solveOutage
+ *  re-solves it when its details are wanted. */
+export function runOutage(caseData, engine, outage, opts) {
+  const c = outageCase(caseData, outage);
   let model;
   try { model = compile(c, engine); } catch (ex) { return { outage, status: 'invalid', note: (ex.issues || [ex.msg])[0] }; }
-  if (model.island.length) return { outage, status: 'islanding', note: `Buses ${model.island.join(', ')} isolated`, severity: 1e6 };
+  if (model.island.length) {
+    // ranked by the load it cuts off: an isolated bus without load (e.g. a condenser) is not a severe outage
+    const lost = model.buses.filter(b => model.island.includes(b.n)).reduce((a, b) => a + (b.pd ? model.f(b.pd) : 0), 0);
+    return { outage, status: 'islanding', note: `Buses ${model.island.join(', ')} isolated${lost ? `, ${+lost.toFixed(3)} MW of load cut off` : ', no load cut off'}`,
+      severity: lost > 0 ? 1e6 + lost : 1 };
+  }
   let r;
   try { r = powerFlow(model, { ...opts, method: 'nr' }); } catch (ex) { return { outage, status: 'diverged', note: ex.msg, severity: 1e5 }; }
   let worst = null, vmin = null, vmax = null, violations = 0;
   for (const b of r.branches) { if (b.loading && (!worst || b.loading.gt(worst.loading))) worst = b; if (b.over) violations++; }
   for (const b of r.bus) { if (!vmin || b.vm.lt(vmin.vm)) vmin = b; if (!vmax || b.vm.gt(vmax.vm)) vmax = b; if (b.vio) violations++; }
   const sev = violations * 1000 + (worst ? worst.loading.toNumber() : 0);
-  return { outage, status: violations ? 'violations' : 'ok', violations, worst, vmin, vmax, loss: r.totals.pl, result: r, severity: sev };
+  return { outage, status: violations ? 'violations' : 'ok', violations, worst, vmin, vmax, loss: r.totals.pl, solved: true, severity: sev };
+}
+/** The full result of one outage, with the model it was solved on (whose Ybus goes with its V). */
+export function solveOutage(caseData, engine, outage, opts) {
+  const model = compile(outageCase(caseData, outage), engine);
+  return { model, result: powerFlow(model, { ...opts, method: 'nr' }) };
 }
 
 

@@ -38,6 +38,18 @@ def seqY(seq, Vpre=None, full=False):
         if seq == 0 and g['gnd']: Y[k, k] += 1 / (1j * (g['x0'] + 3 * g['xn']))
     return Y
 a = np.exp(2j * np.pi / 3); A = np.array([[1, 1, 1], [1, a * a, a], [1, a, a * a]])
+def zone_angles(k):
+    """Radians each bus's zone leads the faulted bus's zone: +30° from the from side to the to side of a
+    Dyn/YNd/Dy/Yd transformer (IEC clock 11), found by walking the network from the fault."""
+    th = {k: 0.0}; todo = [k]
+    while todo:
+        i = todo.pop()
+        for br in ppc['branch']:
+            f, t = int(br[0]) - 1, int(br[1]) - 1
+            lead = np.radians(30) if CONN.get((f + 1, t + 1)) in ('Dyn', 'YNd', 'Dy', 'Yd') else 0.0
+            for a, b, sgn in ((f, t, 1), (t, f, -1)):
+                if a == i and b not in th: th[b] = th[i] + sgn * lead; todo.append(b)
+    return np.array([th[i] for i in range(n)])
 def fault(kind, k, zf, Vpre, full):
     Z1 = np.linalg.inv(seqY(1, Vpre, full)); Z2 = np.linalg.inv(seqY(2, Vpre, full)); Z0 = np.linalg.inv(seqY(0, Vpre, full))
     Vf = Vpre[k]
@@ -48,6 +60,8 @@ def fault(kind, k, zf, Vpre, full):
         z03 = Z0[k, k] + 3 * zf; I1 = Vf / (Z1[k, k] + Z2[k, k] * z03 / (Z2[k, k] + z03)); I2 = -I1 * z03 / (z03 + Z2[k, k]); I0 = -I1 * Z2[k, k] / (z03 + Z2[k, k])
     Iabc = A @ np.array([I0, I1, I2])
     V1 = Vpre - Z1[:, k] * I1; V2 = -Z2[:, k] * I2; V0 = -Z0[:, k] * I0
+    th = zone_angles(k)                         # Δ-Y phase shift (clock 11) relative to the faulted bus
+    V1 = V1 * np.exp(1j * th); V2 = V2 * np.exp(-1j * th)
     Vabc = (A @ np.vstack([V0, V1, V2])).T
     return {'Iabc': [abs(x) for x in Iabc], 'seq': [abs(I0), abs(I1), abs(I2)], 'V': np.abs(Vabc).tolist()}
 r, ok = runpf(copy.deepcopy(ppc), ppoption(VERBOSE=0, OUT_ALL=0, PF_TOL=1e-13))
