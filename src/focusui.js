@@ -36,8 +36,8 @@ export function init(ctx, root) {
     const total = r && !r.pending ? r.mins * 60000 : Pr.phaseMins(r ? r.ph : 'focus') * 60000;
     setText(clock, Pr.fmtTime(left ?? total));
     const name = !r || r.ph === 'focus' ? 'Focus' : r.ph === 'long' ? 'Long break' : 'Break';
-    const n = P().set + (r && r.ph === 'focus' && !r.pending ? 1 : 0);
-    setText(phase, `${name} · ${r && r.ph !== 'focus' ? 'rest' : `session ${Math.max(1, n)} of ${P().pomo.every}`}${r && r.left != null ? ' · paused' : ''}`);
+    const n = Math.min(P().set + 1, P().pomo.every);      // the focus session that is running or comes next
+    setText(phase, `${name} · ${r && r.ph !== 'focus' ? 'rest' : `session ${n} of ${P().pomo.every}`}${r && r.left != null ? ' · paused' : ''}`);
     fill.style.transform = `scaleX(${left == null ? 0 : (1 - left / total).toFixed(4)})`;
     clock.classList.toggle('run', !!(r && !r.pending && r.end != null));
   }

@@ -4,6 +4,7 @@ import { h, toast } from './ui.js';
 import { icon } from './icons.js';
 
 const MAX_SHOWN = 200;
+const TIME = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit' });   // built once (per message it was ~50 µs)
 
 export function init(ctx, root) {
   const Pr = ctx.profile;
@@ -34,21 +35,38 @@ export function init(ctx, root) {
       status.className = 'chatstatus ' + s;
       send.disabled = s !== 'online';
     } else if (kind === 'message') addMessage(data);
+    else if (kind === 'undelivered') {                     // the link died before the message went out: offer it again
+      toast('Message not delivered: reconnecting');
+      if (!input.value.trim()) input.value = data.text;
+    }
   });
 
-  function addMessage(m) {
-    const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  function row(m) {
     const el = h('div', 'msg' + (m.mine ? ' mine' : ''));
     const who = h('div', 'who');
     const name = h('b', null, m.nick);                      // all plain text (textContent), never HTML
     if (m.tag) name.appendChild(h('span', 'tg', '#' + m.tag));
     if (m.level) name.appendChild(h('span', 'lv', 'Lv ' + m.level));
-    who.append(name, h('span', null, new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
+    who.append(name, h('span', null, TIME.format(m.ts)));
     el.append(who, h('div', 'txt', m.text));                 // plain text only: never interpreted as HTML
-    list.appendChild(el);
-    while (list.children.length > MAX_SHOWN) list.firstElementChild.remove();
-    if (atBottom || m.mine) list.scrollTop = list.scrollHeight;
+    return el;
+  }
+  // messages are added once per frame, in one batch (one layout however many arrive); of a burst only the last
+  // MAX_SHOWN are ever built
+  let queue = [];
+  function addMessage(m) {
     if (!visible && !m.mine) { unread++; ctx.unread(unread); }
+    if (queue.push(m) === 1) requestAnimationFrame(flush);
+    else if (queue.length > 2 * MAX_SHOWN) queue.splice(0, queue.length - MAX_SHOWN);   // frames pause while hidden
+  }
+  function flush() {
+    const batch = queue.slice(-MAX_SHOWN), mine = queue.some(m => m.mine); queue = [];
+    const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    const f = document.createDocumentFragment();
+    for (const m of batch) f.appendChild(row(m));
+    list.appendChild(f);
+    for (let n = list.children.length - MAX_SHOWN; n > 0; n--) list.firstElementChild.remove();
+    if (atBottom || mine) list.scrollTop = list.scrollHeight;
   }
   function submit() {
     const p = Pr.get();
