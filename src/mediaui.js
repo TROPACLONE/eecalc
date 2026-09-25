@@ -141,7 +141,7 @@ export function browser(root) {
   function chips(entries, cur, pick) {
     const row = h('div', 'chips');
     for (const [k, label, ic] of entries) {
-      const b = h('button', 'cchip' + (cur === k ? ' on' : ''));
+      const b = h('button', 'cchip' + (cur === k ? ' on' : '')); b.setAttribute('aria-pressed', String(cur === k));
       if (ic) b.appendChild(icon(ic)); else if (ic === undefined) b.appendChild(h('span', 'flag', flag(k)));
       b.appendChild(h('span', null, label));
       b.addEventListener('click', () => { pick(k); render(); });
@@ -200,7 +200,7 @@ export function browser(root) {
     body.appendChild(h('div', 'mini', 'LibriVox recordings are public domain, read by volunteers, and streamed from the Internet Archive.'));
   }
   function render() {
-    for (const b of tabs.children) b.classList.toggle('on', b.dataset.k === S.tab);
+    for (const b of tabs.children) { const on = b.dataset.k === S.tab; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
     body.replaceChildren();
     if (!navigator.onLine) body.appendChild(h('div', 'mini warnline', 'Offline: listening needs an internet connection.'));
     if (S.tab === 'radio') radio();

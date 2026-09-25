@@ -17,7 +17,7 @@ export function init(ctx, root) {
   const pf = { method: 'nr', qlim: true, start: 'flat', res: null, title: '', tab: 'summary', err: null, busy: false };
   const sc = { bus: null, type: '3ph', zf: '0', prefault: 'flat', res: null, err: null };
   const n1 = { res: null, running: false, cancel: false, done: 0, total: 0, branches: true, gens: true, run: 0, snapshot: null, qlim: false };
-  const dropN1 = () => { n1.res = null; n1.snapshot = null; if (n1.running) { n1.running = false; n1.run++; } };   // results no longer match the case
+  const dropN1 = () => { n1.res = null; n1.snapshot = null; n1.eng = null; if (n1.running) { n1.running = false; n1.run++; } };   // results no longer match the case
   let zfEd = null;
 
   const scroll = h('div', 'scroll nscroll'), bar = h('div', 'celledit');
@@ -77,7 +77,11 @@ export function init(ctx, root) {
   }
 
   // ═══════════════════════════════════════════════ case editor
+  let shownTab = null;
   function renderCase() {
+    // a re-render (after an edit) keeps where the user was in the table and on the page
+    const tw0 = scroll.querySelector('.tw'), keep = tw0 && shownTab === tab ? [tw0.scrollTop, tw0.scrollLeft, scroll.scrollTop] : null;
+    shownTab = tab;
     const top = h('div', 'nhead');
     const name = h('button', 'casename', kase.name);
     name.addEventListener('click', () => { const v = prompt('Case name', kase.name); if (v && v.trim()) { kase.name = v.trim().slice(0, 60); dirty = true; renderCase(); } });
@@ -103,6 +107,7 @@ export function init(ctx, root) {
     const grid = table(cols.map(c => c.label), rows, (i, j, td) => cellTap(i, cols[j], td));
     onTap(grid.querySelector('tbody'), () => {}, target => {
       const tr = target.closest('tr'); if (!tr) return;
+      if (!commitCell()) return;                           // the open cell first: its row index must still be right
       const i = +tr.dataset.i;
       sheet(`${NW.TABLE_TITLES[tab]} row ${i + 1}`, [
         ['Insert a row below', () => { kase[tab].splice(i + 1, 0, NW.blankRow(tab, kase)); changed(); }],
@@ -114,6 +119,7 @@ export function init(ctx, root) {
     const hint = h('div', 'mini', 'Tap a cell to edit · touch and hold a row for more · long values scroll sideways');
     scroll.replaceChildren(top, btns, info, tabs, grid, add, hint);
     scroll.classList.add('casemode');
+    if (keep) { grid.scrollTop = keep[0]; grid.scrollLeft = keep[1]; scroll.scrollTop = keep[2]; }
   }
   function changed() { dirty = true; pf.res = null; sc.res = null; dropN1(); renderCase(); }
   function starter() {
@@ -127,7 +133,7 @@ export function init(ctx, root) {
   function setCase(c, fromFile) { commitCell(); kase = c; kase._fromFile = fromFile; dirty = !fromFile && c.name === 'New case'; pf.res = null; sc.res = null; dropN1(); sc.bus = null; renderCase(); }
   function discard(then) {
     if (!dirty) { then(); return; }
-    sheet('This case has unsaved changes', [['Discard changes', then, 'danger'], ['Save first', () => saveCase().then(then)]]);
+    sheet('This case has unsaved changes', [['Discard changes', then, 'danger'], ['Save first', () => saveCase().then(ok => { if (ok) then(); })]]);
   }
   function examples() {
     sheet('Example cases (MATPOWER)', Object.values(EXAMPLES).map(ex => [ex.title, () => discard(() => setCase(NW.fromMatpower(ex.text, ex.title), false))]));
@@ -140,12 +146,14 @@ export function init(ctx, root) {
       catch (ex) { toast(ex.msg || 'This file is not a case'); }
     });
   }
+  /** -> true once the case is saved (false if the user cancelled or the save failed). */
   async function saveCase() {
-    commitCell();
+    if (!commitCell()) return false;
     const clean = JSON.parse(JSON.stringify(kase)); delete clean._fromFile;
     const fname = (kase.name.replace(/[^\w\- .]+/g, '').trim() || 'case').slice(0, 40) + '.eecase.json';
     const ok = await saveFile(fname, NW.toFile(clean));
     if (ok) { dirty = false; kase._fromFile = true; toast('Saved'); if (current === 'case') renderCase(); }
+    return !!ok;
   }
   function cellTap(i, col, td) {
     const row = kase[tab][i];
@@ -170,7 +178,7 @@ export function init(ctx, root) {
     bar.append(lab, rowEl); bar.hidden = false;
     const ed = new Editor(edEl, null);
     ed.set(text);
-    cell = { table, row, key, td, ed, col };
+    cell = { table, row, key, td, ed, col, orig: text.trim() };
     if (td) { scroll.querySelectorAll('td.editing').forEach(x => x.classList.remove('editing')); td.classList.add('editing'); }
     activate(ed);
     ctx.updatePad();
@@ -178,6 +186,13 @@ export function init(ctx, root) {
   function commitCell(moveDown) {
     if (!cell) return true;
     const { table, row, key, ed, col } = cell, text = ed.text.trim();
+    if (text === cell.orig) {                              // nothing changed: not an edit (results and N-1 stay)
+      if (cell.td) cell.td.classList.remove('editing');
+      const next = moveDown && table !== 'base' && row + 1 < kase[table].length ? row + 1 : null;
+      closeCell();
+      if (next !== null) openBelow(table, next, key);
+      return true;
+    }
     if (text && col.type !== 'text') {
       try { if (col.type === 'int' && !/^-?\d+$/.test(text)) throw new E.CalcError('Must be a whole number'); E.parse(text); }
       catch (ex) { toast(ex.msg || 'Not a valid number'); return false; }
@@ -187,17 +202,23 @@ export function init(ctx, root) {
     dirty = true; pf.res = null; sc.res = null; dropN1();
     const next = moveDown && table !== 'base' && row + 1 < kase[table].length ? row + 1 : null;
     closeCell();
-    renderCase();
-    if (next !== null) {
-      const colIdx = NW.COLUMNS[table].findIndex(c => c.key === key);
-      const td = scroll.querySelector(`tr[data-i="${next}"] td[data-j="${colIdx}"]`);
-      editCell(table, next, key, td);
-      if (td) td.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    }
+    if (current === 'case') renderCase();
+    if (next !== null) openBelow(table, next, key);
     return true;
   }
-  function cancelCell() { closeCell(); renderCase(); }
-  function closeCell() { cell = null; bar.hidden = true; bar.replaceChildren(); activate(null); ctx.updatePad(); }
+  function openBelow(table, row, key) {                    // Enter moves on to the same column in the next row
+    const colIdx = NW.COLUMNS[table].findIndex(c => c.key === key);
+    const td = scroll.querySelector(`tr[data-i="${row}"] td[data-j="${colIdx}"]`);
+    editCell(table, row, key, td);
+    if (td) td.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+  function cancelCell() { closeCell(); if (current === 'case') renderCase(); }
+  function closeCell() {
+    const ed = cell && cell.ed;
+    cell = null; bar.hidden = true; bar.replaceChildren();
+    if (ed && activeEditor() === ed) activate(null);         // only its own editor: the calculator's may be active already
+    ctx.updatePad();
+  }
 
   // ═══════════════════════════════════════════════ power flow
   function renderPF() {
@@ -221,10 +242,10 @@ export function init(ctx, root) {
     if (c.issues) { pf.err = issuesBox(c.issues); pf.res = null; renderPF(); return; }
     pf.busy = true; pf.err = null; renderPF();
     setTimeout(() => {
-      try { pf.res = NW.powerFlow(c.model, { method: pf.method, qlim: pf.qlim, start: pf.start }); pf.title = 'Base case'; pf.tab = 'summary'; }
+      try { pf.res = NW.powerFlow(c.model, { method: pf.method, qlim: pf.qlim, start: pf.start }); pf.res.model = c.model; pf.title = 'Base case'; pf.tab = 'summary'; }
       catch (ex) { pf.res = null; pf.err = h('div', 'issues', ex.msg || String(ex)); }
       pf.busy = false;
-      renderPF();
+      if (current === 'pf') renderPF();
     }, 30);
   }
   function pfResults() {
@@ -288,11 +309,13 @@ export function init(ctx, root) {
     } else if (pf.tab === 'iter') {
       const log = r.log;
       out.push(h('div', 'mini', 'Iteration log in double precision (the final result is then refined and verified). Mismatches in pu on the system base.'));
-      out.push(table(['Iteration', 'max |ΔP|', 'max |ΔQ|'], log.map(e => [String(e.it), e.dP.toExponential(3).replace('.', ','), e.dQ.toExponential(3).replace('.', ',')])));
+      // Gauss-Seidel can take hundreds of iterations: the first 15 and the last 15 are shown
+      const shown = log.length > 40 ? [...log.slice(0, 15), null, ...log.slice(-15)] : log, gap = `… ${log.length - 30} iterations …`;
+      out.push(table(['Iteration', 'max |ΔP|', 'max |ΔQ|'], shown.map(e => (e ? [String(e.it), e.dP.toExponential(3).replace('.', ','), e.dQ.toExponential(3).replace('.', ',')] : [gap, '', '']))));
       if (log.length && log[0].V) {
         const f6 = x => x.toFixed(6).replace('.', ',');
         out.push(h('div', 'mini', 'Bus voltages at each iteration (|V| pu ∠ θ °):'));
-        out.push(table(['Iteration', ...r.bus.map(b => `Bus ${b.n}`)], log.map(e => [String(e.it), ...e.V.map((v, k) => `${f6(v)} ∠ ${f6(e.Va[k])}`)])));
+        out.push(table(['Iteration', ...r.bus.map(b => `Bus ${b.n}`)], shown.map(e => (e ? [String(e.it), ...e.V.map((v, k) => `${f6(v)} ∠ ${f6(e.Va[k])}`)] : [gap, ...r.bus.map(() => '')]))));
       }
       if (log.length && log[0].J) {
         const m = log[0].Jn, J = log[0].J, rowsJ = [];
@@ -306,7 +329,7 @@ export function init(ctx, root) {
   function sendToCalc(r) {
     const n = r.V.length, v = new E.Mat(n, 1, r.V.slice());
     eng.setVar('Vbus', v);
-    const c = r.model ? { model: r.model } : compileCase();   // an N-1 result carries its own (outage) model
+    const c = r.model ? { model: r.model } : compileCase();   // each result carries the model it was solved on
     if (c.model) {
       const Y = new E.Mat(n, n);
       E.internals.withDps(50, () => {
@@ -335,8 +358,10 @@ export function init(ctx, root) {
     opts.append(busBtn, segmented(FAULTS, sc.type, v => { sc.type = v; sc.res = null; }));
     const zrow = h('div', 'fields');
     const zl = h('label', null, 'Fault impedance Zf'), zv = h('div'), zu = h('span', 'unit', 'pu');
+    const wasActive = zfEd && activeEditor() === zfEd;      // a re-render must not strand the keypad on the old editor
     zfEd = new Editor(zv, ed => { sc.zf = ed.text; });
     zfEd.set(sc.zf);
+    if (wasActive) activate(zfEd);
     zrow.append(zl, zv, zu);
     opts.append(zrow, segmented([['flat', 'Prefault 1,0 pu'], ['pf', 'Prefault from power flow']], sc.prefault, v => { sc.prefault = v; sc.res = null; }));
     parts.push(opts, button('Compute fault', runSC, 'accent big'));
@@ -408,7 +433,7 @@ export function init(ctx, root) {
         const x = res[i];
         if (!x.solved) { toast(x.note || 'No results for this outage'); return; }
         let full;                                            // re-solved on demand: the list keeps only summaries
-        try { full = NW.solveOutage(n1.snapshot, eng, x.outage, { qlim: n1.qlim }); } catch (ex) { toast(ex.msg || String(ex)); return; }
+        try { full = NW.solveOutage(n1.snapshot, n1.eng, x.outage, { qlim: n1.qlim }); } catch (ex) { toast(ex.msg || String(ex)); return; }
         pf.res = full.result; pf.res.model = full.model; pf.title = `${x.outage.label} out`; pf.tab = 'summary'; pf.err = null;
         ctx.show('net', 'pf');
       }));
@@ -419,17 +444,19 @@ export function init(ctx, root) {
   function runN1() {
     const c = compileCase();
     if (c.issues) { n1.err = issuesBox(c.issues); renderN1(); return; }
-    let base;
-    try { base = NW.powerFlow(c.model, { qlim: pf.qlim }); } catch (ex) { n1.err = h('div', 'issues', 'Base case: ' + (ex.msg || ex)); renderN1(); return; }
-    void base;
+    // the base case only has to converge (checked in double precision; each outage is then solved and verified)
+    try { const b = NW.floatPowerFlow(c.model, { qlim: pf.qlim, method: 'nr' }); if (!b.converged) throw new E.CalcError('Newton-Raphson did not converge'); }
+    catch (ex) { n1.err = h('div', 'issues', 'Base case: ' + (ex.msg || ex)); renderN1(); return; }
     const list = NW.outages(c.model).filter(o => (o.kind === 'branch' ? n1.branches : n1.gens));
+    // the case and the calculator variables it may use are frozen for the run (a row opened later re-solves the same)
+    const frozen = new E.Engine(); frozen.angleUnit = eng.angleUnit; for (const [k, v] of eng.vars) frozen.vars.set(k, v);
     const snapshot = JSON.parse(JSON.stringify(kase)), qlim = pf.qlim, res = [], run = ++n1.run;
-    Object.assign(n1, { running: true, cancel: false, done: 0, total: list.length, res, err: null, snapshot, qlim });
+    Object.assign(n1, { running: true, cancel: false, done: 0, total: list.length, res, err: null, snapshot, qlim, eng: frozen });
     renderN1();
     const step = () => {
       if (run !== n1.run) return;                            // the case was edited (or a new run started): drop this one
       if (n1.cancel || n1.done >= list.length) { n1.running = false; if (n1.cancel) toast('Stopped'); if (current === 'n1') renderN1(); return; }
-      res.push(NW.runOutage(snapshot, eng, list[n1.done], { qlim }));
+      res.push(NW.runOutage(snapshot, frozen, list[n1.done], { qlim }));
       n1.done++;
       if (current === 'n1') { const s = scroll.querySelector('.status'); if (s) s.textContent = `Analysing outage ${Math.min(n1.done + 1, n1.total)} of ${n1.total}…`; }
       setTimeout(step, 0);                                   // keep the interface responsive between outages
@@ -440,8 +467,8 @@ export function init(ctx, root) {
   // ═══════════════════════════════════════════════ module interface
   function render() { ({ case: renderCase, pf: renderPF, sc: renderSC, n1: renderN1 })[current](); }
   return {
-    show(sub) { if (sub !== current) commitCell(); current = sub; render(); scroll.scrollTop = 0; },
-    hide() { commitCell(); },
+    show(sub) { if (sub !== current && !commitCell()) closeCell(); current = sub; render(); scroll.scrollTop = 0; },
+    hide() { if (!commitCell()) closeCell(); },
     wantsPad() { const a = activeEditor(); return (current === 'case' && !!cell) || (current === 'sc' && a && a === zfEd); },
     enter(ed) { if (cell && ed === cell.ed) commitCell(true); else if (ed === zfEd) runSC(); },
     escape() { if (cell) cancelCell(); },

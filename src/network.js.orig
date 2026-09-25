@@ -110,26 +110,12 @@ export function fromFile(text, name) {
     const o = JSON.parse(t);
     if (o.format !== 'eecalc-case' || !o.case) throw new CalcError('Not an EE Calc case file');
     const c = Object.assign(newCase(), o.case);
-    c.name = String(c.name ?? 'Case').slice(0, 60); c.base = String(c.base ?? '');
-    for (const k of ['buses', 'gens', 'branches']) c[k] = (Array.isArray(c[k]) ? c[k] : []).map(r => normRow(k, r));
+    for (const k of ['buses', 'gens', 'branches']) c[k] = (c[k] || []).map(r => Object.assign(blankRowShape(k), r));
     return c;
   }
   return fromMatpower(t, name);
 }
 const blankRowShape = table => Object.fromEntries(COLUMNS[table].map(col => [col.key, '']));
-/** A row from a file as the editor would have it: every value text, "on" as '1' / '0' (in service when absent),
- *  choices matched without regard to case ("ynd" → "YNd"). Anything else is left for compile() to report. */
-function normRow(table, r) {
-  const out = Object.assign(blankRowShape(table), r && typeof r === 'object' ? r : {});
-  for (const col of COLUMNS[table]) {
-    const v = out[col.key];
-    if (col.type === 'bool') out[col.key] = v === '' || v == null ? '1' : v === true || v === 1 || String(v).trim() === '1' ? '1' : '0';
-    else if (v == null) out[col.key] = '';
-    else if (col.type === 'enum') out[col.key] = col.opts.find(o => o.toLowerCase() === String(v).trim().toLowerCase()) ?? String(v);
-    else out[col.key] = String(v);
-  }
-  return out;
-}
 
 // ═════════════════════════════════════════════════════════ compile: validate and parse numbers exactly
 export class CaseError extends CalcError { constructor(issues) { super(issues.join('\n')); this.issues = issues; } }
@@ -153,15 +139,14 @@ export function compile(c, engine) {
     try { p = parseNumberText(text); } catch (ex) { issues.push(`${label}: ${ex.msg || 'invalid number'}`); return null; }
     if (!p && required) issues.push(`${label}: value required`);
     if (!p) return null;
-    const cell = { p, label };
+    const cell = { p };
     cells.push(cell);
     return cell;
   };
-  const busRef = v => (/^-?\d+$/.test(String(v ?? '').trim()) ? Number(String(v).trim()) : NaN);   // "1x" or "1.9" is not bus 1
   let baseP = null;
   try { baseP = parseNumberText(c.base); } catch { /* reported below */ }
   if (!baseP) issues.push('System base MVA: value required');
-  const base = baseP ? { p: baseP, label: 'System base MVA' } : null;
+  const base = baseP ? { p: baseP } : null;
   if (base) cells.push(base);
 
   const buses = [], byNum = new Map();
@@ -187,9 +172,8 @@ export function compile(c, engine) {
 
   const gens = [];
   c.gens.forEach((g, i) => {
-    const n = busRef(g.bus), L = `Generator row ${i + 1} (bus ${g.bus})`;
+    const n = parseInt(String(g.bus).trim(), 10), L = `Generator row ${i + 1} (bus ${g.bus})`;
     if (!byNum.has(n)) { issues.push(`${L}: bus ${g.bus} does not exist`); return; }
-    if (g.gnd && !['grounded', 'ungrounded'].includes(g.gnd)) issues.push(`${L}: neutral must be grounded or ungrounded`);
     gens.push({ row: i, bus: n, on: g.on === '1' || g.on === true, gnd: g.gnd || 'grounded',
       pg: num('gens', i, 'pg', true, `${L} P`), qg: num('gens', i, 'qg', false, `${L} Q`),
       qmax: num('gens', i, 'qmax', false, `${L} Qmax`), qmin: num('gens', i, 'qmin', false, `${L} Qmin`),
@@ -198,10 +182,9 @@ export function compile(c, engine) {
   });
   const branches = [];
   c.branches.forEach((br, i) => {
-    const f = busRef(br.from), t = busRef(br.to);
+    const f = parseInt(String(br.from).trim(), 10), t = parseInt(String(br.to).trim(), 10);
     const L = `Branch row ${i + 1} (${br.from}–${br.to})`;
     if (!byNum.has(f) || !byNum.has(t)) { issues.push(`${L}: bus does not exist`); return; }
-    if (br.conn && !COLUMNS.branches.find(col => col.key === 'conn').opts.includes(br.conn)) issues.push(`${L}: unknown zero-sequence connection "${br.conn}"`);
     if (f === t) { issues.push(`${L}: both ends on the same bus`); return; }
     const on = (br.on === '1' || br.on === true) && byNum.get(f).type !== 'Off' && byNum.get(t).type !== 'Off';
     branches.push({ row: i, f, t, on, conn: br.conn || '',
@@ -233,8 +216,8 @@ function decValues(model, dps) {
     for (const cell of model.cells) {
       if (cell.p.lit) { m.set(cell, cell.p.lit); continue; }
       let v;
-      try { v = E.norm(model.engine.ev(cell.p.node)); } catch (ex) { throw new CaseError([`${cell.label}: ${ex.msg || 'invalid expression'}`]); }
-      if (!E.isR(v)) throw new CaseError([`${cell.label}: a case value must be a real number`]);
+      try { v = E.norm(model.engine.ev(cell.p.node)); } catch (ex) { throw new CaseError([ex.msg || 'invalid expression']); }
+      if (!E.isR(v)) throw new CaseError(['A case value must be a real number']);
       m.set(cell, v);
     }
   });
@@ -592,20 +575,17 @@ function refineDec(model, fsol, qfixExact) {
   const { P, Q, base } = injectionsDec(model, vals, type, null);
   for (const [k] of fsol.qfix) Q[k] = qfixExact.get(k);
   // state: V = vr + j·vi, and for PQ buses the magnitude vm tracked exactly (no square roots in the loop)
-  const vr = new Array(n), vi = new Array(n), vm = new Array(n), th = new Array(n);
-  let slackDeg = null;
+  const vr = new Array(n), vi = new Array(n), vm = new Array(n);
   model.buses.forEach((b, k) => {
     let mag, c, s_;
     if (k === model.slack) {                                   // slack: magnitude and angle exactly as entered
       const va = b.va ? vals.get(b.va) : d(0);
-      slackDeg = va;
       mag = vals.get(model.genAt[k][0].vg);
       const u = va.isZero() ? null : I.cisHt(D.div(va, 180));
       c = u ? I.re(u) : d(1); s_ = u ? I.im(u) : d(0);
     } else {
       mag = type[k] !== 'PQ' ? vals.get(model.genAt[k][0].vg) : d(fsol.Vm[k]);
-      th[k] = d(fsol.Va[k]);
-      c = D.cos(th[k]); s_ = D.sin(th[k]);
+      c = D.cos(d(fsol.Va[k])); s_ = D.sin(d(fsol.Va[k]));
     }
     vm[k] = mag; vr[k] = D.mul(mag, c); vi[k] = D.mul(mag, s_);
   });
@@ -648,7 +628,6 @@ function refineDec(model, fsol, qfixExact) {
     const dx = solveFloat(L, F);
     pvpq.forEach((k, c) => {                                     // rotate by −Δθ
       const e = smallExpJ(d(-dx[c])), er = I.re(e), ei = I.im(e);
-      th[k] = D.sub(th[k], d(dx[c]));
       const r = D.sub(D.mul(vr[k], er), D.mul(vi[k], ei)); vi[k] = D.add(D.mul(vr[k], ei), D.mul(vi[k], er)); vr[k] = r;
     });
     pq.forEach((k, c) => {                                       // scale the magnitude: vm → vm − ΔVm
@@ -657,18 +636,7 @@ function refineDec(model, fsol, qfixExact) {
     });
   }
   const V = vr.map((r, k) => E.norm(new Cx(r, vi[k])));
-  // angles in degrees without atan2: the refinement only rotates by exactly known angles (a value chopped to the real
-  // axis by norm gets 0 or 180, as carg would give); magnitudes as tracked (PQ) or entered (PV, slack)
-  const pi = I.PI(), twoPi = D.mul(pi, 2);
-  const deg = V.map((v, k) => {
-    if (k === model.slack) return slackDeg;
-    if (!E.isC(v)) return v.isNeg() ? d(180) : d(0);
-    let t = th[k];
-    while (t.gt(pi)) t = D.sub(t, twoPi);
-    while (t.lte(pi.neg())) t = D.add(t, twoPi);
-    return D.div(D.mul(t, 180), pi);
-  });
-  return { V, I: currentsDec(Yd, V), Yd, vals, base, P, Q, deg, vm };
+  return { V, I: currentsDec(Yd, V), Yd, vals, base, P, Q };
 }
 
 /** Exact fixed Q injection (pu) of each bus switched to PQ at its generators' Q limit. */
@@ -714,7 +682,7 @@ function results(model, fsol, ref) {
   // subtraction; everything else is taken exactly from the data (as MATPOWER's pfsoln does).
   const given = (k, key) => model.genAt[k].reduce((acc, g) => (g[key] ? D.add(acc, vals.get(g[key])) : acc), d(0));
   const bus = model.buses.map((b, k) => {
-    const vm = cabs(V[k]), va = ref.deg ? ref.deg[k] : toDeg(I.carg(V[k]));
+    const vm = cabs(V[k]), va = toDeg(I.carg(V[k]));
     const kv = b.kv ? D.mul(vm, vals.get(b.kv)) : null;
     const lo = b.vmin && vm.lt(vals.get(b.vmin)), hi = b.vmax && vm.gt(vals.get(b.vmax));
     const t = fsol.type[k], sw = fsol.switched.find(x => x.k === k);
@@ -747,9 +715,8 @@ function results(model, fsol, ref) {
     const y = Yd.blocks[i], a = model.idx.get(br.f), b = model.idx.get(br.t);
     const If = sumTerms([[y.yff, V[a]], [y.yft, V[b]]]), It = sumTerms([[y.ytf, V[a]], [y.ytt, V[b]]]);
     const Sf = E.norm(mul(mul(V[a], conj(If)), base)), St = E.norm(mul(mul(V[b], conj(It)), base));
-    const sf = cabs(Sf), st = cabs(St);
-    const loss = I.chopRef(sub(Sf, mul(St, d(-1))), D.max(sf, st));      // = E.diff(Sf, −St), |Sf| and |St| computed once
-    const rate = br.rate && !vals.get(br.rate).isZero() ? vals.get(br.rate) : null;
+    const loss = E.diff(Sf, mul(St, d(-1)));
+    const sf = cabs(Sf), st = cabs(St), rate = br.rate && !vals.get(br.rate).isZero() ? vals.get(br.rate) : null;
     const loading = rate ? D.div(D.mul(D.max(sf, st), 100), rate) : null;
     branches.push({ f: br.f, t: br.t, row: br.row, pf: I.re(Sf), qf: I.im(Sf), pt: I.re(St), qt: I.im(St),
       pl: I.re(loss), ql: I.im(loss), sf, st, rate, loading, over: loading && loading.gt(100) });
@@ -887,15 +854,12 @@ function seqNetwork(model, vals, seq, opts, pfV) {
       if (!conn) { need.push(`Branch ${br.f}–${br.t}: zero-sequence connection`); continue; }
       if (conn === 'line' || conn === 'YNyn') {
         if (!br.x0) { need.push(`Branch ${br.f}–${br.t}: X0`); continue; }
-        const z0 = E.norm(new Cx(v(br.r0) || d(0), v(br.x0)));
-        if (I.isZero(z0)) { need.push(`Branch ${br.f}–${br.t}: R0 and X0 must not both be zero`); continue; }
-        const y = div(d(1), z0);
+        const y = div(d(1), E.norm(new Cx(v(br.r0) || d(0), v(br.x0))));
         put(a, a, y); put(b, b, y); put(a, b, mul(y, d(-1))); put(b, a, mul(y, d(-1)));
         if (conn === 'line' && br.b0) { const yc = new Cx(d(0), D.div(v(br.b0), 2)); put(a, a, yc); put(b, b, yc); }
       } else if (conn === 'YNd' || conn === 'Dyn') {
-        const z = E.norm(br.x0 ? new Cx(v(br.r0) || d(0), v(br.x0)) : new Cx(v(br.r) || d(0), v(br.x)));
-        if (I.isZero(z)) { need.push(`Branch ${br.f}–${br.t}: R0 and X0 must not both be zero`); continue; }
-        put(conn === 'YNd' ? a : b, conn === 'YNd' ? a : b, div(d(1), z));
+        const z = br.x0 ? new Cx(v(br.r0) || d(0), v(br.x0)) : new Cx(v(br.r) || d(0), v(br.x));
+        put(conn === 'YNd' ? a : b, conn === 'YNd' ? a : b, div(d(1), E.norm(z)));
       }
       continue;                                  // Yd, Dy, Dd, Yy: no zero-sequence path
     }
@@ -923,22 +887,11 @@ function seqNetwork(model, vals, seq, opts, pfV) {
   for (const g of model.gens) {
     if (!g.on || !model.idx.has(g.bus)) continue;
     const k = model.idx.get(g.bus);
-    // a zero reactance would be a short circuit to the source: said so, instead of "Division by zero"
-    if (seq === 1) {
-      if (!g.x1) { need.push(`Generator at bus ${g.bus}: X″d`); continue; }
-      if (v(g.x1).isZero()) { need.push(`Generator at bus ${g.bus}: X″d must not be zero`); continue; }
-      put(k, k, div(d(1), new Cx(d(0), v(g.x1))));
-    }
-    if (seq === 2) {
-      const x = v(g.x2) || v(g.x1); if (!x) { need.push(`Generator at bus ${g.bus}: X2 or X″d`); continue; }
-      if (x.isZero()) { need.push(`Generator at bus ${g.bus}: X2 must not be zero`); continue; }
-      put(k, k, div(d(1), new Cx(d(0), x)));
-    }
+    if (seq === 1) { if (!g.x1) { need.push(`Generator at bus ${g.bus}: X″d`); continue; } put(k, k, div(d(1), new Cx(d(0), v(g.x1)))); }
+    if (seq === 2) { const x = v(g.x2) || v(g.x1); if (!x) { need.push(`Generator at bus ${g.bus}: X2 or X″d`); continue; } put(k, k, div(d(1), new Cx(d(0), x))); }
     if (seq === 0 && g.gnd !== 'ungrounded') {
       if (!g.x0) { need.push(`Generator at bus ${g.bus}: X0`); continue; }
-      const x = D.add(v(g.x0), D.mul(3, v(g.xn) || d(0)));
-      if (x.isZero()) { need.push(`Generator at bus ${g.bus}: X0 + 3·Xn must not be zero`); continue; }
-      put(k, k, div(d(1), new Cx(d(0), x)));
+      put(k, k, div(d(1), new Cx(d(0), D.add(v(g.x0), D.mul(3, v(g.xn) || d(0))))));
     }
   }
   if (need.length) throw new CaseError([`${['Zero', 'Positive', 'Negative'][seq]}-sequence data needed:`, ...[...new Set(need)]]);
@@ -1006,13 +959,6 @@ function zoneShifts(model, vals, k, pfMode) {
 export function shortCircuit(model, opts) {
   const k = model.idx.get(opts.bus);
   if (k === undefined) throw new CalcError(`Bus ${opts.bus} is not in service`);
-  // a fault needs a source: some generator with X″d connected to the faulted bus (else no current, or a singular matrix)
-  const adj = model.buses.map(() => []);
-  for (const br of model.branches) if (br.on) { const a = model.idx.get(br.f), b = model.idx.get(br.t); adj[a].push(b); adj[b].push(a); }
-  const seen = new Set([k]), todo = [k];
-  while (todo.length) for (const j of adj[todo.pop()]) if (!seen.has(j)) { seen.add(j); todo.push(j); }
-  if (!model.gens.some(g => g.on && g.x1 && seen.has(model.idx.get(g.bus))))
-    throw new CalcError(`Bus ${opts.bus} is not connected to any generator with X″d: there is no fault current`);
   const kind = opts.type;
   let fsol = null;
   if (opts.prefault === 'pf') {
@@ -1089,13 +1035,9 @@ export function runOutage(caseData, engine, outage, opts) {
   try { model = compile(c, engine); } catch (ex) { return { outage, status: 'invalid', note: (ex.issues || [ex.msg])[0] }; }
   if (model.island.length) {
     // ranked by the load it cuts off: an isolated bus without load (e.g. a condenser) is not a severe outage
-    // ranked by the load and the generation cut off from the slack bus's network (an empty bus alone is harmless)
-    const cut = new Set(model.island);
-    const load = model.buses.filter(b => cut.has(b.n)).reduce((a, b) => a + (b.pd ? model.f(b.pd) : 0), 0);
-    const gen = model.gens.filter(g => g.on && cut.has(g.bus)).reduce((a, g) => a + (g.pg ? model.f(g.pg) : 0), 0);
-    const mw = x => `${+x.toFixed(3)} MW`, what = [load && `${mw(load)} of load`, gen && `${mw(gen)} of generation`].filter(Boolean);
-    return { outage, status: 'islanding', note: `Buses ${model.island.join(', ')} cut off from the slack bus${what.length ? `: ${what.join(' and ')}` : ', with no load or generation'}`,
-      severity: load > 0 || gen > 0 ? 1e6 + load + gen : 1 };
+    const lost = model.buses.filter(b => model.island.includes(b.n)).reduce((a, b) => a + (b.pd ? model.f(b.pd) : 0), 0);
+    return { outage, status: 'islanding', note: `Buses ${model.island.join(', ')} isolated${lost ? `, ${+lost.toFixed(3)} MW of load cut off` : ', no load cut off'}`,
+      severity: lost > 0 ? 1e6 + lost : 1 };
   }
   let r;
   try { r = powerFlow(model, { ...opts, method: 'nr' }); } catch (ex) { return { outage, status: 'diverged', note: ex.msg, severity: 1e5 }; }

@@ -16,7 +16,8 @@ export const LIMITS = { focus: [5, 90], short: [1, 30], long: [5, 60], every: [2
 const DEFAULTS = { focus: 25, short: 5, long: 15, every: 4 };
 export const XP = { focusMin: 2, breakMin: 1, setBonus: 25, useSec: 120 };
 
-export const checkName = n => (NAME_OK.test(n.trim()) ? null : `Name: ${NAME_RULE}`);
+// Hangul fillers are letters that show nothing: a name made of them would be invisible
+export const checkName = n => (NAME_OK.test(n.trim()) && !/[\u115F\u1160\u3164\uFFA0]/u.test(n) ? null : `Name: ${NAME_RULE}`);
 export const levelOf = xp => {                  // largest L with 50·L·(L − 1) ≤ xp (closed form, then exact integer fix-up)
   let L = Math.max(1, Math.floor((1 + Math.sqrt(1 + xp / 12.5)) / 2));
   while (L > 1 && 50 * L * (L - 1) > xp) L--;
@@ -125,21 +126,35 @@ export function check() {
   return r.ph;
 }
 
-let tick = 0, endTimer = 0;
+let tick = 0, endTimer = 0, wall = 0, mono = 0;
+/** The wall clock set back while a phase runs would stretch it (a 25 min phase showing 74:58): the phase end moves
+ *  back by the same amount. Only backward jumps: a forward one can't be told apart from the device sleeping. */
+function clockBack() {
+  const w = Date.now(), m = performance.now(), back = wall ? (m - mono) - (w - wall) : 0;
+  wall = w; mono = m;
+  const r = P && P.run;
+  if (back > 2000 && r && !r.pending && r.end != null) { r.end -= back; save(); }
+}
 function pomoTimer() {
-  clearInterval(tick); clearTimeout(endTimer); tick = endTimer = 0;
+  clearInterval(tick); clearTimeout(endTimer); tick = endTimer = 0; wall = 0;
   const r = P && P.run;
   if (!r || r.pending || r.end == null) return;
   if (r.end > Date.now() + r.mins * 60000) r.end = Date.now() + r.mins * 60000;   // the clock was moved back
   // one-shot at the phase end: also fires in the background whenever iOS runs JS (e.g. while the radio plays),
   // so the radio stops on time; the 1-Hz display tick runs only while the app is visible
   endTimer = setTimeout(() => { check(); pomoTimer(); }, Math.min(2 ** 31 - 1, Math.max(0, r.end - Date.now()) + 50));
-  if (document.visibilityState === 'visible') tick = setInterval(() => { check(); emit('tick'); }, 1000);
+  if (document.visibilityState === 'visible') { clockBack(); tick = setInterval(() => { clockBack(); check(); emit('tick'); }, 1000); }
 }
 onChange(w => { if (w === 'run' || w === 'reset' || (w && w.done)) pomoTimer(); });
 
 export function init() {
   document.addEventListener('visibilitychange', () => { useVisibility(); if (document.visibilityState === 'visible') check(); pomoTimer(); });
+  // another tab (Safari, a desktop browser) changed or reset the profile: take its version instead of overwriting it
+  window.addEventListener('storage', e => {
+    if (e.key !== KEY && e.key !== null) return;
+    load(); emit(P ? 'profile' : 'reset');
+    if (P) emit('run');
+  });
   useVisibility(); check(); pomoTimer();
 }
 export const fmtTime = ms => { const s = Math.ceil(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };

@@ -18,15 +18,16 @@ export function init(ctx, root) {
   root.replaceChildren(scroll);
 
   const btn = (label, fn, cls = 'btn') => { const b = h('button', cls, label); b.addEventListener('click', fn); return b; };
+  const go = fn => () => { ctx.unlockAudio(); fn(); };      // inside the tap: lets the end-of-phase chime play on iOS
   function renderActs() {
     const r = P().run, a = [];
-    if (!r) a.push(btn('Start focus', () => Pr.start('focus'), 'btn accent big'));
+    if (!r) a.push(btn('Start focus', go(() => Pr.start('focus')), 'btn accent big'));
     else if (r.pending) {
       const m = Pr.phaseMins(r.ph);
       a.push(btn(r.ph === 'focus' ? `Start focus (${m} min)` : `Start ${r.ph === 'long' ? 'long ' : ''}break (${m} min)`,
-        () => Pr.start(r.ph), 'btn accent big'), btn('Skip', () => Pr.skip(), 'btn wide2'));
+        go(() => Pr.start(r.ph)), 'btn accent big'), btn('Skip', () => Pr.skip(), 'btn wide2'));
     } else if (r.end != null) a.push(btn('Pause', () => Pr.pause(), 'btn big'), btn('Stop (no XP)', confirmStop, 'btn wide2'));
-    else a.push(btn('Resume', () => Pr.resume(), 'btn accent big'), btn('Stop (no XP)', confirmStop, 'btn wide2'));
+    else a.push(btn('Resume', go(() => Pr.resume()), 'btn accent big'), btn('Stop (no XP)', confirmStop, 'btn wide2'));
     acts.replaceChildren(...a);
   }
   const confirmStop = () => sheet('Stop this session? It earns no XP.', [['Stop session', () => Pr.stop()]]);

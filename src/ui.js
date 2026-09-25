@@ -68,10 +68,21 @@ export function onTap(el, tap, hold) {
   el.addEventListener('pointercancel', () => { clearTimeout(timer); start = null; });
   el.addEventListener('contextmenu', e => e.preventDefault());
 }
+// Escape and a tap on the backdrop close a sheet. The backdrop only counts when the press also started on it: the
+// release of the long press that opened a sheet lands on the new backdrop and must not close it again.
+let sheetWired = false, downOnBackdrop = false;
+function wireSheet(s) {
+  sheetWired = true;
+  s.addEventListener('pointerdown', e => { downOnBackdrop = e.target === s; });
+  s.addEventListener('click', e => { if (e.target === s && downOnBackdrop) closeSheet(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !s.hidden) { e.preventDefault(); closeSheet(); } });
+}
 /** Bottom sheet: optional title, custom content builder, actions [label, fn, cls?]. */
 export function sheet(title, actions, build) {
   const s = $('sheet'), box = h('div', 'box');
-  if (title) box.appendChild(h('h4', null, title));
+  if (!sheetWired) wireSheet(s);
+  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true');
+  if (title) { box.appendChild(h('h4', null, title)); box.setAttribute('aria-label', title); }
   if (build) build(box);
   for (const a of actions.filter(Boolean)) {
     const b = h('button', 'act' + (a[2] ? ' ' + a[2] : ''), a[0]);
@@ -80,12 +91,17 @@ export function sheet(title, actions, build) {
   }
   const cancel = h('button', 'act muted', actions.length || !build ? 'Cancel' : 'Close');
   cancel.addEventListener('click', closeSheet); box.appendChild(cancel);
-  s.replaceChildren(box); s.hidden = false;
+  s.replaceChildren(box); s.hidden = false; downOnBackdrop = false;
+  const first = box.querySelector('button');             // for VoiceOver and keyboards: into the dialog
+  if (first) first.focus({ preventScroll: true });
   return box;
 }
 export function closeSheet() { $('sheet').hidden = true; $('sheet').replaceChildren(); }
 let toastTimer = 0;
-export function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 1600); }
+export function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 1600);
+  const said = document.getElementById('said'); if (said) said.textContent = msg;   // announced by VoiceOver (a live region)
+}
 export function copy(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast('Copy not allowed'));
   else toast('Copy not available');

@@ -31,6 +31,7 @@ let netMod = null, chatMod = null, focusMod = null, energy = null, mediaMod = nu
 const ctx = {
   eng, st, E, show: (v, s) => show(v, s), updatePad: () => updatePad(), setTitle: () => setTitle(),
   useValue(name, value) { eng.setVar(name, value); show('calc'); main.insert(name); toast(`Saved as ${name}`); },
+  unlockAudio: () => unlockChime(),
   unread(n) { st.unread = n; $('dot').hidden = !n || st.view === 'chat'; },
   profile: Pr,
 };
@@ -63,6 +64,7 @@ function updatePreview() {
 function run() {
   const t = main.text.trim();
   if (!t || busy) return;
+  clearTimeout(pvTimer);                             // a pending preview must not overwrite the result or its error
   const cmd = commandOf(t);
   if (cmd) { runCommand(cmd, t); pushInput(t); main.clear(); return; }
   if (pvDelay > SLOW_MS) {                            // let "Calculating…" paint before a long computation
@@ -128,8 +130,9 @@ function renderHistory() {
   const gen = ++renderGen;
   historyEl.replaceChildren();
   if (!items.length) { const d = h('div', 'hint'); d.innerHTML = EMPTY; historyEl.appendChild(d); $('clear-hist').hidden = true; return; }
-  const pending = items.slice(0, -16), frag = document.createDocumentFragment();
-  for (const it of items.slice(-16)) frag.appendChild(entryEl(it));        // more than a screenful, even on iPad
+  const first = Math.max(4, Math.ceil((historyEl.clientHeight || 600) / 60) + 1);   // what fits on screen, plus one
+  const pending = items.slice(0, -first), frag = document.createDocumentFragment();
+  for (const it of items.slice(-first)) frag.appendChild(entryEl(it));
   historyEl.appendChild(frag);
   historyEl.scrollTop = historyEl.scrollHeight;
   // older entries are built off the page in slices of ~25 ms (under the 50 ms of a long task) and inserted about every
@@ -210,20 +213,26 @@ function renderPad() {
     b.setAttribute('aria-label', { back: 'Delete', left: 'Cursor left', right: 'Cursor right', exe: 'Evaluate', fn: 'Functions', abc: 'Letters keyboard' }[act] || label);
   });
 }
-let lpTimer = 0, lpFired = false, downKey = null;
+// one entry per finger: two-thumb typing overlaps taps (A down, B down, A up, B up). Each key captures its pointer,
+// so its release comes back to it even when the finger (or an iPad pointer) ends outside the keypad.
+const downs = new Map();                             // pointerId → { b, lp: long-press timer, fired }
 pad.addEventListener('pointerdown', e => {
   const b = e.target.closest('.k'); if (!b) return;
   e.preventDefault();
-  downKey = b; b.classList.add('down'); lpFired = false;
-  if (b.dataset.act === 'back') lpTimer = setTimeout(() => { lpFired = true; const a = activeEditor(); if (a) a.clear(); }, LONG_PRESS);
+  try { b.setPointerCapture(e.pointerId); } catch { /* the pointer is already gone */ }
+  const d = { b, lp: 0, fired: false };
+  b.classList.add('down');
+  if (b.dataset.act === 'back') d.lp = setTimeout(() => { d.fired = true; const a = activeEditor(); if (a) a.clear(); }, LONG_PRESS);
+  downs.set(e.pointerId, d);
 });
 const release = e => {
-  clearTimeout(lpTimer);
-  const b = downKey; downKey = null;
-  if (!b) return;
-  b.classList.remove('down');
-  if (e.type === 'pointerup' && !lpFired && b.contains(document.elementFromPoint(e.clientX, e.clientY))) key(b.dataset.act);
+  const d = downs.get(e.pointerId); if (!d) return;
+  downs.delete(e.pointerId); clearTimeout(d.lp);
+  d.b.classList.remove('down');
+  if (e.type === 'pointerup' && !d.fired && d.b.contains(document.elementFromPoint(e.clientX, e.clientY))) key(d.b.dataset.act);
 };
+// keyboard / Switch Control / Full Keyboard Access activate a key with a click that has no pointer (detail 0)
+pad.addEventListener('click', e => { if (e.detail !== 0) return; const b = e.target.closest('.k'); if (b) key(b.dataset.act); });
 pad.addEventListener('pointerup', release);
 pad.addEventListener('pointercancel', release);
 pad.addEventListener('contextmenu', e => e.preventDefault());
@@ -278,6 +287,7 @@ const mapChars = s => s.replace(/[<@]/g, '∠');
 document.addEventListener('keydown', e => {
   const tag = document.activeElement && document.activeElement.tagName;
   if (document.activeElement === sysin || tag === 'INPUT' || tag === 'TEXTAREA' || !$('sheet').hidden) return;
+  if (tag === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) return;   // a focused button: Space / Enter press it
   if (e.metaKey || e.ctrlKey || e.altKey || !wantsPad()) return;
   const ed = activeEditor(); if (!ed) return;
   const k = e.key;
@@ -338,6 +348,7 @@ function openMenu() {
     box.classList.add('menu');
     const item = (label, fn, cls, note, ic) => {
       const b = h('button', 'mi' + (cls ? ' ' + cls : ''));
+      if (cls && cls.split(' ').includes('cur')) b.setAttribute('aria-current', 'page');
       if (ic) b.appendChild(icon(ic));
       b.appendChild(h('span', 'ml', label));
       if (note) b.appendChild(h('small', null, note));
@@ -387,7 +398,14 @@ async function show(view, sub = null) {
   if (view === 'chat' && !navigator.onLine) { toast('The chat needs an internet connection'); return; }
   st.view = view; st.sub = sub;
   for (const v of VIEWS) $('v-' + v).hidden = v !== view;
+  // other screens let go first (the Network cell editor, if open, is committed or closed), then this one takes over
+  if (view !== 'net' && netMod) netMod.hide();
+  if (view !== 'focus' && focusMod) focusMod.hide();
+  if (view !== 'media' && mediaView) mediaView.hide();
+  if (view !== 'chat' && chatMod) chatMod.hide();
   if (view === 'calc') activate(main);
+  else if (!['energy', 'net'].includes(view)) activate(null);
+  setTitle(); updatePad(); updateMini();              // now, not after a first-time module load ("Loading…")
   if (view === 'energy') {
     if (!energy) energy = new EnergyView($('v-energy'));
     if (sub && N.TOOL_BY_ID[sub]) energy.open(N.TOOL_BY_ID[sub]); else if (sub === 'list' || !energy.tool) energy.list(); else energy.focus();
@@ -399,21 +417,21 @@ async function show(view, sub = null) {
   if (view === 'net') {
     if (!netMod) { const m = await lazy('v-net', () => import('./netui.js')); if (!m) return; if (!netMod) netMod = m.init(ctx, $('v-net')); if (moved()) return; }
     netMod.show(sub || 'case');
-  } else if (netMod) netMod.hide();
+  }
   if (view === 'focus') {
     if (!focusMod) { const m = await lazy('v-focus', () => import('./focusui.js')); if (!m) return; if (!focusMod) focusMod = m.init(ctx, $('v-focus')); if (moved()) return; }
     focusMod.show();
-  } else if (focusMod) focusMod.hide();
+  }
   if (view === 'media') {
     if (!mediaView) { const m = await lazy('v-media', loadMedia); if (!m) return; if (!mediaView) mediaView = m.ui.screen($('v-media')); if (moved()) return; }
     mediaView.show();
-  } else if (mediaView) mediaView.hide();
+  }
   if (view === 'profile') renderProfile();
   if (view === 'chat') {
     if (!chatMod) { const m = await lazy('v-chat', () => import('./chatui.js')); if (!m) return; if (!chatMod) chatMod = m.init(ctx, $('v-chat')); if (moved()) return; }
     chatMod.show();
     $('dot').hidden = true;
-  } else if (chatMod) chatMod.hide();
+  }
   if (!['calc', 'energy', 'net'].includes(view)) activate(null);
   setTitle();
   updatePad();
@@ -482,7 +500,8 @@ class EnergyView {
     if (!tool.fn) {                                    // formula module not loaded yet: load, then reopen
       this.pending = tool;
       this.root.replaceChildren(h('div', 'hint pad16', 'Loading…'));
-      N.ready(tool).then(() => { if (this.pending === tool) this.open(tool); },
+      // loaded after the user left Energy tools: not opened (it would take the keypad on another screen)
+      N.ready(tool).then(() => { if (this.pending === tool) { if (st.view === 'energy') this.open(tool); else this.pending = null; } },
         () => { if (this.pending === tool) this.root.replaceChildren(h('div', 'hint pad16', "This tool couldn't be loaded. Open the app once while online.")); });
       return;
     }
@@ -628,14 +647,27 @@ function onboard() {
   inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); done(); } });
   setTimeout(() => inp.focus(), 50);
 }
-let chimeCtx = null;
+let chimeCtx = null, chimeSleep = 0;
+/** Called inside the Start / Resume tap on Focus: iOS lets an audio context start only from a tap, once; later chimes
+ *  (from the timer) can then resume it. It is suspended again right away, as after every chime (battery). */
+function unlockChime() {
+  if (mediaMod && mediaMod.player.ctx) return;       // the player's context (unlocked by its own taps) serves
+  const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+  try { chimeCtx = chimeCtx || new AC(); if (chimeCtx.state !== 'running') chimeCtx.resume().then(sleepChime, () => {}); }
+  catch { /* no audio */ }
+}
+function sleepChime() {
+  clearTimeout(chimeSleep);
+  chimeSleep = setTimeout(() => { if (chimeCtx && chimeCtx.state === 'running') chimeCtx.suspend().catch(() => {}); }, 1500);
+}
 function chime() {                                   // two soft sine tones; silent if audio isn't unlocked yet
   try {
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
-    const c = (mediaMod && mediaMod.player.ctx) || chimeCtx || (chimeCtx = new AC());
-    // the player suspends its context when nothing plays: wake it (allowed once it has been unlocked by a tap)
-    if (c.state !== 'running') { c.resume().then(() => { if (c.state === 'running') { tones(c); if (mediaMod && c === mediaMod.player.ctx) mediaMod.player.idle(); } }, () => {}); return; }
-    tones(c);
+    const pc = mediaMod && mediaMod.player.ctx, c = pc || chimeCtx || (chimeCtx = new AC());
+    // a suspended context is woken for the tones, then put back to sleep (the player's: only if nothing plays)
+    const after = () => { if (c === pc) mediaMod.player.idle(); else sleepChime(); };
+    if (c.state !== 'running') { c.resume().then(() => { if (c.state === 'running') { tones(c); after(); } }, () => {}); return; }
+    tones(c); if (c !== pc) sleepChime();
   } catch { /* no audio: the toast is enough */ }
 }
 function tones(c) {
@@ -666,7 +698,12 @@ Pr.onChange(w => {
   }
   if (w && w.xp && w.why !== 'use') setTimeout(() => toast(`+${w.xp} XP` + (w.up ? ` · Level ${w.level}!` : '')), 1600);
   else if (w && w.up) toast(`Level ${w.level}!`);
-  if (w && (w.xp || w === 'profile') && st.view === 'profile') renderProfile();
+  if (w && (w.xp || w === 'profile') && st.view === 'profile') {
+    // an XP tick must not wipe a name being edited (and close the keyboard): the level waits for the next render
+    const inp = $('v-profile').querySelector('input');
+    if (w.xp && inp && (document.activeElement === inp || inp.value.trim() !== Pr.get().name)) return;
+    renderProfile();
+  }
 });
 $('pomo').addEventListener('click', () => show('focus'));
 
