@@ -1011,7 +1011,9 @@ export function shortCircuit(model, opts) {
   for (const br of model.branches) if (br.on) { const a = model.idx.get(br.f), b = model.idx.get(br.t); adj[a].push(b); adj[b].push(a); }
   const seen = new Set([k]), todo = [k];
   while (todo.length) for (const j of adj[todo.pop()]) if (!seen.has(j)) { seen.add(j); todo.push(j); }
-  if (!model.gens.some(g => g.on && g.x1 && seen.has(model.idx.get(g.bus))))
+  const sources = model.gens.filter(g => g.on && g.x1);
+  if (!sources.length) throw new CalcError('The positive-sequence network has no source: add generator X″d values');
+  if (!sources.some(g => seen.has(model.idx.get(g.bus))))
     throw new CalcError(`Bus ${opts.bus} is not connected to any generator with X″d: there is no fault current`);
   const kind = opts.type;
   let fsol = null;
