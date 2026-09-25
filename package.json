@@ -1,0 +1,19 @@
+{
+  "name": "webapp",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node tests/compare.mjs && node tests/compare_energy.mjs && node tests/compare_im.mjs && node tests/test_im_textbook.mjs && node tests/fuzz_im.mjs && node tests/test_network.mjs && node tests/test_sc.mjs && node tests/test_n1.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "decimal.js": "^10.6.0",
+    "esbuild": "^0.28.2"
+  },
+  "type": "module",
+  "private": true
+}
